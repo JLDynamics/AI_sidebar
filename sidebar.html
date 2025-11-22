@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Sidebar</title>
+    <link rel="stylesheet" href="sidebar.css">
+    <script src="marked.min.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- History Drawer -->
+        <div class="history-drawer" id="historyDrawer">
+            <div class="history-header">
+                <button id="newChatBtn" class="new-chat-btn">
+                    <span class="icon">+</span> New Chat
+                </button>
+            </div>
+            <div class="history-list" id="historyList">
+                <!-- History items will be injected here -->
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Header -->
+            <div class="header">
+                <button id="toggleHistoryBtn" class="icon-btn" title="Toggle History">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+                <div class="header-title">
+                    <img src="https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg"
+                        alt="Gemini" class="gemini-icon">
+                    <span>Gemini Assistant</span>
+                </div>
+                <div class="header-controls">
+                    <!-- Settings or Close could go here -->
+                </div>
+            </div>
+
+            <!-- Chat Area -->
+            <div class="chat-container" id="chatContainer">
+                <!-- Messages will be injected here -->
+                <div class="welcome-message">
+                    <div class="welcome-icon">✨</div>
+                    <h2>How can I help you today?</h2>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="input-area">
+                <div class="input-container">
+                    <textarea id="chatInput" placeholder="Ask anything..." rows="1"></textarea>
+                    <button id="sendBtn" class="send-btn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+                <div class="input-footer">
+                    Gemini can make mistakes. Check important info.
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="config.js"></script>
+    <script src="sidebar.js"></script>
+</body>
+
+</html>

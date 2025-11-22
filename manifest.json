@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini Sidebar Assistant",
+  "version": "1.1",
+  "description": "A foldable sidebar to ask Gemini questions about the current page.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "Readability.js",
+        "content.js"
+      ]
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidebar.html"
+  },
+  "action": {
+    "default_title": "Open Gemini Sidebar"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "marked.min.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}
