@@ -24,7 +24,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // --- OpenAI Integration ---
 
 async function handleOpenAIRequest(apiKey, question, metadata, history) {
-    const OPENAI_API_KEY = CONFIG.OPENAI_API_KEY;
+    const OPENROUTER_API_KEY = apiKey;
     // Use OpenRouter API endpoint
     const url = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -59,7 +59,7 @@ Content: ${truncatedContent}
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${OPENAI_API_KEY}`
+            'Authorization': `Bearer ${OPENROUTER_API_KEY}`
         },
         body: JSON.stringify({
             model: "x-ai/grok-4.1-fast:free",
