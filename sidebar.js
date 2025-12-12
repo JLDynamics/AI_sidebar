@@ -29,6 +29,9 @@ document.addEventListener('DOMContentLoaded', () => {
     setupInputAutoResize();
 });
 
+// TTS Initialization
+const tts = new GeminiTTS(CONFIG.GEMINI_TTS_API_KEY);
+
 // Event Listeners
 function setupEventListeners() {
     toggleHistoryBtn.addEventListener('click', toggleHistory);
@@ -208,6 +211,103 @@ function appendMessageToUI(role, content, id = null) {
     }
 
     messageDiv.appendChild(bubble);
+
+    // Add TTS Button for AI messages
+    if (role === 'AI') {
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'message-actions';
+
+        const ttsBtn = document.createElement('button');
+        ttsBtn.className = 'tts-btn';
+        ttsBtn.title = 'Read aloud';
+        ttsBtn.innerHTML = `
+            <span class="tts-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                </svg>
+            </span>
+            <span class="tts-spinner">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+                </svg>
+            </span>
+        `;
+
+        ttsBtn.onclick = async () => {
+            if (ttsBtn.classList.contains('playing')) {
+                tts.stop();
+                ttsBtn.classList.remove('playing');
+                ttsBtn.innerHTML = `
+                    <span class="tts-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                        </svg>
+                    </span>
+                    <span class="tts-spinner">
+                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+                        </svg>
+                    </span>
+                `;
+            } else {
+                // Stop any other buttons
+                document.querySelectorAll('.tts-btn.playing').forEach(btn => {
+                    btn.classList.remove('playing');
+                    // Reset icon
+                    btn.querySelector('.tts-icon').innerHTML = `
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                        </svg>
+                    `;
+                });
+
+                ttsBtn.classList.add('loading');
+
+                try {
+                    // Strip markdown for cleaner speech (basic)
+                    // The tts model handles some markdown, but cleaning simple stuff helps.
+                    // For now pass raw content, Gemini TTS is smart.
+
+                    const audioBuffer = await tts.generateSpeech(content);
+
+                    ttsBtn.classList.remove('loading');
+                    ttsBtn.classList.add('playing');
+
+                    // Change icon to Stop
+                    ttsBtn.querySelector('.tts-icon').innerHTML = `
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                             <rect x="6" y="4" width="4" height="16"></rect>
+                             <rect x="14" y="4" width="4" height="16"></rect>
+                        </svg>
+                    `;
+
+                    tts.play(audioBuffer, () => {
+                        ttsBtn.classList.remove('playing');
+                        // Reset icon to Play
+                        ttsBtn.querySelector('.tts-icon').innerHTML = `
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                            </svg>
+                        `;
+                    });
+                } catch (e) {
+                    console.error(e);
+                    ttsBtn.classList.remove('loading');
+                    // Show error state briefly
+                    ttsBtn.style.color = '#ef4444';
+                    setTimeout(() => ttsBtn.style.color = '', 2000);
+                }
+            }
+        };
+
+        actionsDiv.appendChild(ttsBtn);
+        messageDiv.appendChild(actionsDiv);
+    }
+
     chatContainer.appendChild(messageDiv);
 
     scrollToBottom();

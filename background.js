@@ -19,14 +19,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 
-// --- Grok uses native web search, no external search API needed ---
+
 
 // --- OpenAI Integration ---
 
 async function handleOpenAIRequest(apiKey, question, metadata, history) {
     const OPENAI_API_KEY = CONFIG.OPENAI_API_KEY;
-    // Use OpenRouter API endpoint
-    const url = 'https://openrouter.ai/api/v1/chat/completions';
+    // Use OpenAI API endpoint
+    const url = 'https://api.openai.com/v1/chat/completions';
 
     // 1. Prepare Context
     const MAX_CONTEXT_LENGTH = 15000;
@@ -54,7 +54,7 @@ Content: ${truncatedContent}
         { role: 'user', content: question }
     ];
 
-    // 3. Make API Call with Native Web Search Enabled
+    // 3. Make API Call
     const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -62,14 +62,8 @@ Content: ${truncatedContent}
             'Authorization': `Bearer ${OPENAI_API_KEY}`
         },
         body: JSON.stringify({
-            model: "x-ai/grok-4.1-fast:free",
-            messages: messages,
-            web_search_options: {}, // Enable Grok's native web search
-            extra_body: {
-                reasoning: {
-                    enabled: false // Disable reasoning for faster responses
-                }
-            }
+            model: "gpt-4.1-nano-2025-04-14",
+            messages: messages
         })
     });
 
