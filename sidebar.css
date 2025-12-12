@@ -413,3 +413,60 @@ textarea::placeholder {
 ::-webkit-scrollbar-thumb:hover {
     background: #555;
 }
+
+/* TTS Button Styles */
+.tts-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    margin-top: 8px;
+    color: #888;
+    transition: color 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+}
+
+.tts-btn:hover {
+    color: #e2e8f0;
+}
+
+.tts-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.tts-btn.playing {
+    color: #a78bfa; /* Violet color active */
+}
+
+.tts-btn.loading {
+    opacity: 0.7;
+    cursor: wait;
+}
+
+.tts-spinner {
+    animation: spin 1s linear infinite;
+    display: none;
+}
+
+.tts-btn.loading .tts-spinner {
+    display: block;
+}
+
+.tts-btn.loading .tts-icon {
+    display: none;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.message-actions {
+    display: flex;
+    justify-content: flex-start;
+    padding-left: 4px;
+}
