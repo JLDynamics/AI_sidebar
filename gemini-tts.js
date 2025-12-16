@@ -26,6 +26,10 @@ class GeminiTTS {
     }
 
     async generateSpeech(text) {
+        if (!text || !text.trim()) {
+            throw new Error('TTS received empty text');
+        }
+
         // Check cache first
         if (this.audioCache.has(text)) {
             return this.audioCache.get(text);

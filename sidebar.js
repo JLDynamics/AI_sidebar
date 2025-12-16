@@ -215,7 +215,7 @@ async function playTTS(text) {
     if (btn) btn.setAttribute('data-playing', 'false'); // Reset others
 
     try {
-        await tts.generateSpeech(text);
+
         const audioBuffer = await tts.generateSpeech(text);
         tts.play(audioBuffer, () => {
             // On ended
@@ -458,7 +458,7 @@ function appendMessageToUI(role, content, id = null, attachment = null) {
             bubble.style.padding = '4px 12px';
         } else {
             // Parse Markdown
-            let parsedContent = marked.parse(content);
+            let parsedContent = sanitizeHTML(marked.parse(content));
 
             // Code Block Injection for Copy Button
             // We use a temporary div to manipulate the HTML
@@ -885,4 +885,25 @@ async function sendToAI(text, options = {}) {
         console.error('Error sending message:', error);
         appendMessageToUI('System', 'Error communicating with AI.');
     }
+}
+// Basic HTML Sanitizer
+function sanitizeHTML(html) {
+    const template = document.createElement('div');
+    template.innerHTML = html;
+
+    // Remove scripts
+    const scripts = template.querySelectorAll('script');
+    scripts.forEach(script => script.remove());
+
+    // Remove event handlers (onclick, etc)
+    const all = template.querySelectorAll('*');
+    all.forEach(el => {
+        Array.from(el.attributes).forEach(attr => {
+            if (attr.name.startsWith('on') || attr.name.startsWith('javascript:')) {
+                el.removeAttribute(attr.name);
+            }
+        });
+    });
+
+    return template.innerHTML;
 }
