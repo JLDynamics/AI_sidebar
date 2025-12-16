@@ -20,6 +20,11 @@ class GeminiTTS {
         }
     }
 
+    // Call this on user interaction (e.g. click) to wake up the audio engine
+    async prepare() {
+        await this.initAudioContext();
+    }
+
     async generateSpeech(text) {
         // Check cache first
         if (this.audioCache.has(text)) {
@@ -60,8 +65,10 @@ class GeminiTTS {
                 throw new Error('No audio data received from Gemini');
             }
 
-            // Decode base64 to audio buffer
+            // Init context before decoding
             await this.initAudioContext();
+
+            // Reduce base64 string to Uint8Array
             const binaryString = atob(inlineData.data);
             const len = binaryString.length;
             const bytes = new Uint8Array(len);
@@ -69,11 +76,27 @@ class GeminiTTS {
                 bytes[i] = binaryString.charCodeAt(i);
             }
 
-            const audioBuffer = await this.decodeAudioData(bytes);
+            // Use native decoding which handles WAV/MP3/Headers automatically
+            // decodeAudioData detaches the buffer, preventing re-use or causing issues if passed directly from view
 
-            // Cache the result
+            // Gemini 2.5 Flash returns Raw 16-bit PCM @ 24kHz. Native decodeAudioData fails on raw PCM.
+            // We proceed directly to manual decoding.
+
+            const rawBuffer = bytes.buffer;
+            const dataInt16 = new Int16Array(rawBuffer);
+            const numChannels = 1;
+            const sampleRate = 24000;
+            const frameCount = dataInt16.length;
+
+            const audioBuffer = this.audioContext.createBuffer(numChannels, frameCount, sampleRate);
+            const channelData = audioBuffer.getChannelData(0);
+
+            for (let i = 0; i < frameCount; i++) {
+                // Normalize Int16 to Float32 [-1.0, 1.0]
+                channelData[i] = dataInt16[i] / 32768.0;
+            }
+
             this.audioCache.set(text, audioBuffer);
-
             return audioBuffer;
         } catch (error) {
             console.error('Gemini TTS Error:', error);
@@ -81,26 +104,10 @@ class GeminiTTS {
         }
     }
 
+    // decodeAudioData method is no longer needed but we can keep it empty or remove it. 
+    // For cleaner code, we removed the call to it above.
     async decodeAudioData(bytes) {
-        // Custom decoding for raw PCM if needed, but Gemini API usually returns standard formats wrapable or raw
-        // The previous analysis showed custom decoding for Mono 24kHz. 
-        // Let's reuse the logic found in gemini-tts-studio/services/audioUtils.ts
-        // which decodes raw PCM 16-bit.
-
-        const dataInt16 = new Int16Array(bytes.buffer);
-        const numChannels = 1;
-        const sampleRate = 24000;
-        const frameCount = dataInt16.length / numChannels;
-
-        const buffer = this.audioContext.createBuffer(numChannels, frameCount, sampleRate);
-        const channelData = buffer.getChannelData(0);
-
-        for (let i = 0; i < frameCount; i++) {
-            // Normalize Int16 to Float32 [-1.0, 1.0]
-            channelData[i] = dataInt16[i] / 32768.0;
-        }
-
-        return buffer;
+        return this.audioContext.decodeAudioData(bytes.buffer);
     }
 
     play(audioBuffer, onEnded) {
