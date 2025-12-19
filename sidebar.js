@@ -4,6 +4,7 @@ const API_KEY = CONFIG.OPENROUTER_API_KEY;
 let chats = [];
 let currentChatId = null;
 let isHistoryOpen = false;
+let currentAttachment = null;
 
 // PDF.js Worker Configuration
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
