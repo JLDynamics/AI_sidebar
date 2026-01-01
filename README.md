@@ -1,10 +1,10 @@
 # AI Sidebar Assistant
 
-A powerful Chrome browser extension that provides an AI-powered sidebar assistant for analyzing webpage content and answering questions.
+A powerful Chrome browser extension that provides an AI-powered sidebar assistant for analyzing webpage content and answering questions. Now powered by **Grok 4.1 Fast** via **OpenRouter**!
 
 ## Features
 
-- **AI-Powered Q&A**: Ask AI questions about the current webpage content
+- **AI-Powered Q&A**: Ask Grok 4.1 Fast questions about the current webpage content
 - **Text-to-Speech (TTS)**: Listen to AI responses with playback controls (pause, resume, rewind, fast-forward)
 - **File Attachments**: Drag & drop or paste files (images, PDFs) directly into the sidebar
 - **PDF Text Extraction**: Automatically extracts text from PDF files
@@ -29,19 +29,23 @@ A powerful Chrome browser extension that provides an AI-powered sidebar assistan
 
 ## Supported AI APIs
 
-- **OpenAI** (GPT models)
-- **Google Gemini** (via Google AI Studio)
+- **OpenRouter** (Grok 4.1 Fast, and other models)
+- **Google Gemini** (via Google AI Studio for TTS)
 
 ## Configuration
 
-Create a `config.js` file with your API keys:
+The `config.js` file is already configured with OpenRouter:
 
 ```javascript
-export const CONFIG = {
-  OPENAI_API_KEY: 'your-openai-api-key',
-  GEMINI_API_KEY: 'your-gemini-api-key'
+const CONFIG = {
+    GEMINI_TTS_API_KEY: 'your-gemini-tts-key',
+    TAVILY_API_KEY: 'your-tavily-key', // Optional
+    OPENROUTER_API_KEY: 'sk-or-v1-...',
+    OPENROUTER_MODEL: 'x-ai/grok-4.1-fast'
 };
 ```
+
+To use your own OpenRouter API key, replace the `OPENROUTER_API_KEY` value.
 
 ## Technical Details
 

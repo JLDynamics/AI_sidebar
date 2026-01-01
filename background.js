@@ -22,12 +22,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 
 
-// --- OpenAI Integration ---
+// --- OpenRouter Integration ---
 
 async function handleOpenAIRequest(apiKey, question, metadata, history, attachment) {
-    const OPENAI_API_KEY = CONFIG.OPENAI_API_KEY;
-    // Use OpenAI API endpoint
-    const url = 'https://api.openai.com/v1/chat/completions';
+    const OPENROUTER_API_KEY = CONFIG.OPENROUTER_API_KEY;
+    const MODEL = CONFIG.OPENROUTER_MODEL;
+    // Use OpenRouter API endpoint
+    const url = 'https://openrouter.ai/api/v1/chat/completions';
 
     // 1. Prepare Context
     const MAX_CONTEXT_LENGTH = 15000;
@@ -93,10 +94,12 @@ Content: ${truncatedContent}
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${OPENAI_API_KEY}`
+            'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+            'HTTP-Referer': 'https://github.com/JLDynamics/AI_sidebar',
+            'X-Title': 'AI Sidebar Assistant'
         },
         body: JSON.stringify({
-            model: "gpt-4o-mini", // Updated Model
+            model: MODEL, // x-ai/grok-4.1-fast
             messages: messages,
             max_tokens: 1000 // Reasonable limit for sidebar
         })
