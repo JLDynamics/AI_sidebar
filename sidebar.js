@@ -1,4 +1,5 @@
 const API_KEY = CONFIG.OPENROUTER_API_KEY;
+const MODEL = CONFIG.OPENROUTER_MODEL;
 
 // State
 let chats = [];
@@ -416,7 +417,7 @@ function renderMessages() {
         chatContainer.innerHTML = `
             <div class="welcome-message">
                 <div class="welcome-icon">✨</div>
-                <h2>How can Grok help you today?</h2>
+                <h2>How can Grok 4.1 Fast help you today?</h2>
             </div>
         `;
         return;

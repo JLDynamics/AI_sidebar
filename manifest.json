@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Grok Sidebar Assistant",
-  "version": "1.2",
-  "description": "A foldable sidebar to ask Grok questions about the current page.",
+  "name": "AI Sidebar Assistant",
+  "version": "1.3",
+  "description": "A foldable sidebar to ask AI (Grok-4.1-fast via OpenRouter) questions about the current page.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -10,7 +10,7 @@
     "sidePanel"
   ],
   "host_permissions": [
-    "https://api.openai.com/*",
+    "https://openrouter.ai/*",
     "https://generativelanguage.googleapis.com/*"
   ],
   "content_security_policy": {
@@ -34,7 +34,7 @@
     "default_path": "sidebar.html"
   },
   "action": {
-    "default_title": "Open Gemini Sidebar"
+    "default_title": "Open AI Sidebar"
   },
   "web_accessible_resources": [
     {
