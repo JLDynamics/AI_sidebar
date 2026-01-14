@@ -1,5 +1,5 @@
-const API_KEY = CONFIG.OPENROUTER_API_KEY;
-const MODEL = CONFIG.OPENROUTER_MODEL;
+// Deprecated config keys removed
+
 
 // State
 let chats = [];
@@ -905,7 +905,7 @@ async function sendToAI(text, options = {}) {
         try {
             const response = await chrome.runtime.sendMessage({
                 type: 'ASK_AI',
-                apiKey: API_KEY, // Still using config key
+                apiKey: null, // RefConfig: Handled in background.js
                 question: text,
                 metadata: metadata,
                 history: history,

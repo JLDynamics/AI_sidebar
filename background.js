@@ -28,7 +28,7 @@ async function handleOpenAIRequest(apiKey, question, metadata, history, attachme
     const ZENMUX_API_KEY = CONFIG.ZENMUX_API_KEY;
     const MODEL = CONFIG.ZENMUX_MODEL;
     // Use ZenMux API endpoint
-    const url = 'https://api.zenmux.com/v1/chat/completions';
+    const url = 'https://zenmux.ai/api/v1/chat/completions';
 
     // 1. Prepare Context
     const MAX_CONTEXT_LENGTH = 15000;

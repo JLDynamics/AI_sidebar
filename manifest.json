@@ -10,7 +10,7 @@
     "sidePanel"
   ],
   "host_permissions": [
-    "https://api.zenmux.com/*",
+    "https://zenmux.ai/*",
     "https://generativelanguage.googleapis.com/*"
   ],
   "content_security_policy": {
