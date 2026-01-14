@@ -13,18 +13,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             url: window.location.href,
             domain: window.location.hostname,
             pageTitle: document.title,
-            mainContent: article.textContent
+            mainContent: article.textContent.substring(0, 40000) // Limit size
           }
         });
       } else {
-        // Fallback if no article is detected
-        console.warn('Readability failed to find an article. Returning metadata with empty content.');
+        // Fallback: Get raw body text (useful for SPAs, Dashboards, etc.)
+        const rawText = document.body.innerText.replace(/\s+/g, ' ').trim().substring(0, 20000);
+        console.log('Readability failed, using raw text fallback.');
+
         sendResponse({
           metadata: {
             url: window.location.href,
             domain: window.location.hostname,
             pageTitle: document.title,
-            mainContent: "No primary content detected."
+            mainContent: rawText || "No readable content found."
           }
         });
       }

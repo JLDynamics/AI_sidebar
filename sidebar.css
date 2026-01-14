@@ -187,6 +187,15 @@ body {
 /* Add a category label style if we wanted to section things later, 
    but for now just polish the list */
 
+.history-item span {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 8px;
+    /* Space between text and button */
+}
+
 .history-item:hover {
     background-color: var(--hover-color);
     color: var(--text-primary);
@@ -203,10 +212,13 @@ body {
     border: none;
     color: var(--text-secondary);
     cursor: pointer;
-    opacity: 0;
+    opacity: 0.6;
+    /* Visible by default for better UX */
     transition: all 0.2s;
     padding: 4px;
     border-radius: 4px;
+    flex-shrink: 0;
+    /* Prevent button from squishing */
 }
 
 .history-item:hover .delete-chat-btn {
@@ -952,7 +964,8 @@ textarea::placeholder {
 }
 
 .tts-control-btn {
-    margin-top: 0 !important; /* Override action-btn margin */
+    margin-top: 0 !important;
+    /* Override action-btn margin */
     padding: 4px;
     border-radius: 6px;
     color: var(--text-secondary);
@@ -971,7 +984,7 @@ textarea::placeholder {
     margin-top: 0 !important;
     width: 32px;
     height: 32px;
-    background: rgba(255, 255, 255, 0.08); 
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .tts-main-btn:hover {

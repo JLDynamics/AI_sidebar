@@ -1,16 +1,17 @@
 # AI Sidebar Assistant
 
-A powerful Chrome browser extension that provides an AI-powered sidebar assistant for analyzing webpage content and answering questions. Now powered by **Grok 4.1 Fast** via **ZenMux**!
+A powerful Chrome browser extension that provides an AI-powered sidebar assistant for analyzing webpage content and answering questions. Now powered by **OpenAI**!
 
 ## Features
 
-- **AI-Powered Q&A**: Ask Grok 4.1 Fast questions about the current webpage content
+- **AI-Powered Q&A**: Ask OpenAI questions about the current webpage content with multi-modal support
 - **Text-to-Speech (TTS)**: Listen to AI responses with playback controls (pause, resume, rewind, fast-forward)
-- **File Attachments**: Drag & drop or paste files (images, PDFs) directly into the sidebar
+- **File Attachments**: Drag & drop or paste files (images, PDFs, text files) directly into the sidebar
 - **PDF Text Extraction**: Automatically extracts text from PDF files
 - **Image Preview**: Lightbox preview for attached images
 - **HTML Sanitization**: Secure handling of AI responses to prevent XSS attacks
 - **Content Analysis**: Uses Mozilla's Readability.js to extract clean page content
+- **Markdown Rendering**: Beautiful rendering of AI responses with syntax highlighting
 
 ## Installation
 
@@ -30,8 +31,7 @@ A powerful Chrome browser extension that provides an AI-powered sidebar assistan
 
 ## Supported AI APIs
 
-- **ZenMux** (Grok 4.1 Fast)
-- **Google Gemini** (via Google AI Studio for TTS)
+- **OpenAI** (GPT-4o-mini for chat, TTS-1 for text-to-speech)
 
 ## Configuration
 
@@ -39,14 +39,12 @@ The extension requires a `config.js` file in the root directory. Copy the follow
 
 ```javascript
 const CONFIG = {
-    ZENMUX_API_KEY: 'sk-zm-...',     // Required: Your ZenMux API key
-    ZENMUX_MODEL: 'x-ai/grok-4.1-fast',
-    GEMINI_TTS_API_KEY: 'your-gemini-tts-key',
-    TAVILY_API_KEY: 'your-tavily-key' // Optional
+    OPENAI_API_KEY: 'sk-...',     // Required: Your OpenAI API key
+    OPENAI_MODEL: 'gpt-4o-mini'   // Optional: Defaults to gpt-4o-mini
 };
 ```
 
-To use the extension, you must provide a valid `ZENMUX_API_KEY`.
+To use the extension, you must provide a valid `OPENAI_API_KEY`.
 
 ## Technical Details
 
@@ -62,14 +60,13 @@ To use the extension, you must provide a valid `ZENMUX_API_KEY`.
 
 ```
 AI_sidebar/
-├── manifest.json          # Extension manifest
-├── background.js          # Service worker
-├── content.js             # Content script for page interaction
+├── manifest.json          # Extension manifest (MV3)
+├── background.js          # Service worker - OpenAI API calls
+├── content.js             # Content script - page extraction
 ├── sidebar.html           # Sidebar interface
-├── sidebar.js             # Sidebar functionality
-├── sidebar.css            # Styling
-├── gemini-tts.js          # TTS functionality
-├── Readability.js         # Content extraction
+├── sidebar.js             # Sidebar functionality + TTS (OpenAI)
+├── sidebar.css            # Styling (dark theme)
+├── Readability.js         # Mozilla content extraction
 ├── marked.min.js          # Markdown renderer
 ├── pdf.min.js             # PDF processing
 ├── pdf.worker.min.js      # PDF worker

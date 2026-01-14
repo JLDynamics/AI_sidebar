@@ -43,8 +43,159 @@ document.addEventListener('DOMContentLoaded', () => {
     setupInputAutoResize();
 });
 
+// OpenAITTS Class Definition
+class OpenAITTS {
+    constructor(apiKey) {
+        this.apiKey = apiKey;
+        this.audioContext = null;
+        this.currentSource = null;
+        this.currentAudioBuffer = null;
+        this.isPlaying = false;
+
+        // Cache audio buffers by text
+        this.audioCache = new Map();
+
+        // Seek State
+        this.currentOffset = 0;
+        this.startTime = 0;
+    }
+
+    async initAudioContext() {
+        if (!this.audioContext) {
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            this.audioContext = new AudioContextClass();
+        }
+        if (this.audioContext.state === 'suspended') {
+            await this.audioContext.resume();
+        }
+    }
+
+    async prepare() {
+        await this.initAudioContext();
+    }
+
+    async generateSpeech(text) {
+        if (!text || !text.trim()) {
+            throw new Error('TTS received empty text');
+        }
+
+        if (this.audioCache.has(text)) {
+            return this.audioCache.get(text);
+        }
+
+        const url = 'https://api.openai.com/v1/audio/speech';
+
+        // Strip URLs to prevent reading them aloud
+        // 1. Remove Markdown links [text](url) -> text
+        let cleanText = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+        // 2. Remove http/https URLs
+        cleanText = cleanText.replace(/https?:\/\/[^\s)]+/g, '');
+        // 3. Remove parenthesized domains often used as citations e.g. (example.com)
+        cleanText = cleanText.replace(/\([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\)/g, '');
+
+        const payload = {
+            model: "gpt-4o-mini-tts-2025-12-15",
+            input: cleanText,
+            voice: "alloy"
+        };
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.apiKey}`
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.error?.message || 'TTS generation failed');
+            }
+
+            const arrayBuffer = await response.arrayBuffer();
+
+            // Decode Audio
+            await this.initAudioContext();
+            const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
+
+            this.audioCache.set(text, audioBuffer);
+            return audioBuffer;
+        } catch (error) {
+            console.error('OpenAI TTS Error:', error);
+            throw error;
+        }
+    }
+
+    play(audioBuffer, offset = 0, onEnded) {
+        this.stop(false);
+
+        const source = this.audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(this.audioContext.destination);
+
+        source.onended = () => {
+            if (this.currentSource === source) {
+                this.isPlaying = false;
+                this.currentSource = null;
+                this.currentOffset = 0;
+                if (onEnded) onEnded();
+            }
+        };
+
+        this.currentAudioBuffer = audioBuffer;
+        this.startTime = this.audioContext.currentTime - offset;
+        this.currentOffset = offset;
+
+        source.start(0, offset);
+        this.currentSource = source;
+        this.isPlaying = true;
+    }
+
+    pause() {
+        if (!this.isPlaying) return;
+        const elapsed = this.audioContext.currentTime - this.startTime;
+        this.currentOffset = elapsed;
+
+        if (this.currentSource) {
+            try { this.currentSource.stop(); } catch (e) { }
+            this.currentSource = null;
+        }
+        this.isPlaying = false;
+    }
+
+    seek(delta) {
+        if (!this.currentAudioBuffer) return;
+
+        let baseTime = this.isPlaying
+            ? (this.audioContext.currentTime - this.startTime)
+            : this.currentOffset;
+
+        let newTime = baseTime + delta;
+        newTime = Math.max(0, Math.min(newTime, this.currentAudioBuffer.duration));
+
+        if (this.isPlaying) {
+            this.play(this.currentAudioBuffer, newTime, this.lastOnEnded);
+        } else {
+            this.currentOffset = newTime;
+        }
+    }
+
+    stop(fullReset = true) {
+        if (this.currentSource) {
+            try { this.currentSource.stop(); } catch (e) { }
+            this.currentSource = null;
+        }
+        this.isPlaying = false;
+        if (fullReset) {
+            this.currentOffset = 0;
+        }
+    }
+}
+
 // TTS Initialization
-const tts = new GeminiTTS(CONFIG.GEMINI_TTS_API_KEY);
+const tts = new OpenAITTS(CONFIG.OPENAI_API_KEY);
 
 // Event Listeners
 function setupEventListeners() {
@@ -303,7 +454,13 @@ function renderPreview() {
 function loadChats() {
     const storedChats = localStorage.getItem('gemini_chats');
     if (storedChats) {
-        chats = JSON.parse(storedChats);
+        try {
+            chats = JSON.parse(storedChats);
+        } catch (e) {
+            console.error('Failed to parse chat history:', e);
+            chats = [];
+            localStorage.removeItem('gemini_chats'); // Reset corrupted data
+        }
     }
 }
 
@@ -417,7 +574,7 @@ function renderMessages() {
         chatContainer.innerHTML = `
             <div class="welcome-message">
                 <div class="welcome-icon">✨</div>
-                <h2>How can Grok 4.1 Fast help you today?</h2>
+                <h2>How can AI Sidebar help you today?</h2>
             </div>
         `;
         return;
@@ -880,16 +1037,74 @@ async function sendToAI(text, options = {}) {
 
     try {
         // Get Page Metadata
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        // CRITICAL FIX: Target 'normal' window to ignore Side Panel focus
+        // This ensures we get the actual browser tab, not the extension context
+        const currentWindow = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+        const [tab] = await chrome.tabs.query({ active: true, windowId: currentWindow.id });
+
+        if (!tab) throw new Error("No active tab found in main window");
+        console.log(`Targeting Real Tab: [${tab.id}] "${tab.title}"`);
+
         let metadata = { url: tab.url, title: tab.title };
 
+        // Force FRESH content extraction via direct injection
+        // This avoids message passing failures or stale content from cached scripts
         try {
-            const response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_PAGE_CONTENT' });
-            if (response && response.metadata) {
-                metadata = response.metadata;
+            if (tab.url && tab.url.startsWith('http')) {
+                // 1. Inject Readability.js library first
+                await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    files: ['Readability.js']
+                });
+
+                // 2. Run extraction logic using the now-available Readability object
+                const result = await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    func: () => {
+                        try {
+                            // Try Readability first
+                            // We need to clone the document to avoid modifying the tailored page
+                            const documentClone = document.cloneNode(true);
+                            // Readability might not be defined if injection failed, so check
+                            if (typeof Readability !== 'undefined') {
+                                const reader = new Readability(documentClone);
+                                const article = reader.parse();
+                                if (article && article.textContent) {
+                                    return {
+                                        url: window.location.href,
+                                        title: article.title || document.title,
+                                        domain: window.location.hostname,
+                                        mainContent: article.textContent.replace(/\s+/g, ' ').trim().substring(0, 15000)
+                                    };
+                                }
+                            }
+
+                            // Fallback to raw innerText
+                            const raw = document.body.innerText.replace(/\s+/g, ' ').trim().substring(0, 15000);
+                            return {
+                                url: window.location.href,
+                                title: document.title,
+                                domain: window.location.hostname,
+                                mainContent: raw || "No readable content found."
+                            };
+                        } catch (e) {
+                            return null;
+                        }
+                    }
+                });
+
+                if (result && result[0] && result[0].result) {
+                    metadata = result[0].result;
+                    console.log('Fresh content extracted via Readability injection');
+                }
+
+                if (result && result[0] && result[0].result) {
+                    metadata = result[0].result;
+                    console.log('Fresh content extracted via injection');
+                }
             }
         } catch (e) {
-            console.log('Content script not ready or restricted page');
+            console.warn('Script injection failed (likely restricted page):', e);
         }
 
         // Prepare History (Last 10 messages for context)
