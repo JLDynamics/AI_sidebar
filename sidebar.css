@@ -499,6 +499,61 @@ body {
     border-bottom-color: #60a5fa;
 }
 
+/* Table Styles */
+.message-bubble table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 14px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.message-bubble thead {
+    background: rgba(255, 255, 255, 0.08);
+    border-bottom: 2px solid var(--border-color);
+}
+
+.message-bubble th {
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-primary);
+    border-right: 1px solid var(--border-color);
+}
+
+.message-bubble th:last-child {
+    border-right: none;
+}
+
+.message-bubble td {
+    padding: 10px 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    border-right: 1px solid var(--border-color);
+    vertical-align: top;
+}
+
+.message-bubble td:last-child {
+    border-right: none;
+}
+
+.message-bubble tr:last-child td {
+    border-bottom: none;
+}
+
+.message-bubble tbody tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+/* Ensure code blocks inside tables are styled properly */
+.message-bubble td code,
+.message-bubble th code {
+    background: transparent;
+    padding: 0;
+    font-size: 0.9em;
+}
+
 /* Input Area */
 .input-area {
     position: absolute;
