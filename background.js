@@ -22,13 +22,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 
 
-// --- OpenRouter Integration ---
+// --- ZenMux Integration ---
 
 async function handleOpenAIRequest(apiKey, question, metadata, history, attachment) {
-    const OPENROUTER_API_KEY = CONFIG.OPENROUTER_API_KEY;
-    const MODEL = CONFIG.OPENROUTER_MODEL;
-    // Use OpenRouter API endpoint
-    const url = 'https://openrouter.ai/api/v1/chat/completions';
+    const ZENMUX_API_KEY = CONFIG.ZENMUX_API_KEY;
+    const MODEL = CONFIG.ZENMUX_MODEL;
+    // Use ZenMux API endpoint
+    const url = 'https://api.zenmux.com/v1/chat/completions';
 
     // 1. Prepare Context
     const MAX_CONTEXT_LENGTH = 15000;
@@ -94,9 +94,7 @@ Content: ${truncatedContent}
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
-            'HTTP-Referer': 'https://github.com/JLDynamics/AI_sidebar',
-            'X-Title': 'AI Sidebar Assistant'
+            'Authorization': `Bearer ${ZENMUX_API_KEY}`
         },
         body: JSON.stringify({
             model: MODEL, // x-ai/grok-4.1-fast
