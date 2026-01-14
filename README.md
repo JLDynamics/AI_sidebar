@@ -5,13 +5,15 @@ A powerful Chrome browser extension that provides an AI-powered sidebar assistan
 ## Features
 
 - **AI-Powered Q&A**: Ask OpenAI questions about the current webpage content with multi-modal support
-- **Text-to-Speech (TTS)**: Listen to AI responses with playback controls (pause, resume, rewind, fast-forward)
+- **Text-to-Speech (TTS)**: Listen to AI responses with OpenAI TTS (gpt-4o-mini-tts-2025-12-15) and playback controls (pause, resume, rewind, fast-forward)
 - **File Attachments**: Drag & drop or paste files (images, PDFs, text files) directly into the sidebar
-- **PDF Text Extraction**: Automatically extracts text from PDF files
+- **PDF Text Extraction**: Automatically extracts text from PDF files using PDF.js
 - **Image Preview**: Lightbox preview for attached images
 - **HTML Sanitization**: Secure handling of AI responses to prevent XSS attacks
 - **Content Analysis**: Uses Mozilla's Readability.js to extract clean page content
 - **Markdown Rendering**: Beautiful rendering of AI responses with syntax highlighting
+- **Chat History**: Persistent conversation history stored locally
+- **Multi-modal Support**: Send text + images together for analysis
 
 ## Installation
 
@@ -31,7 +33,9 @@ A powerful Chrome browser extension that provides an AI-powered sidebar assistan
 
 ## Supported AI APIs
 
-- **OpenAI** (GPT-4o-mini for chat, TTS-1 for text-to-speech)
+- **OpenAI** (GPT-4o-mini for chat, gpt-4o-mini-tts-2025-12-15 for text-to-speech)
+- **TTS Voice**: Alloy (default)
+- **Audio Format**: Raw PCM (manually decoded for seeking support)
 
 ## Configuration
 
@@ -44,40 +48,83 @@ const CONFIG = {
 };
 ```
 
-To use the extension, you must provide a valid `OPENAI_API_KEY`.
+To use the extension, you must provide a valid `OPENAI_API_KEY`. You can get one from [OpenAI Platform](https://platform.openai.com/api-keys).
+
+**Note**: The extension uses the OpenAI Chat Completions API and Audio Speech API. Make sure your API key has access to both.
+
+## How It Works
+
+1. **Content Extraction**: When you ask a question, the extension injects a script into the active tab to extract page content using Readability.js (falls back to raw text)
+2. **AI Processing**: Your question + page content is sent to OpenAI's GPT-4o-mini API with a system prompt
+3. **Response**: AI response is rendered as markdown with syntax highlighting
+4. **TTS**: Click the speaker icon to generate and play audio using OpenAI TTS
+5. **History**: All conversations are saved locally in your browser
 
 ## Technical Details
 
-- **Manifest Version**: 3
-- **Permissions**: activeTab, scripting, storage, sidePanel
-- **Content Security Policy**: Strict CSP for security
+- **Manifest Version**: 3 (Chrome Extension standard)
+- **Permissions**: activeTab, tabs, scripting, storage, sidePanel
+- **Content Security Policy**: `script-src 'self'; object-src 'self'`
+- **API Endpoints**:
+  - Chat: `https://api.openai.com/v1/chat/completions`
+  - TTS: `https://api.openai.com/v1/audio/speech`
 - **Libraries Used**:
   - Readability.js (Mozilla) - Content extraction
   - marked.min.js - Markdown rendering
   - pdf.min.js / pdf.worker.min.js - PDF processing
+- **Audio Handling**: Manual PCM decoding for seekable playback
 
 ## Project Structure
 
 ```
 AI_sidebar/
-├── manifest.json          # Extension manifest (MV3)
-├── background.js          # Service worker - OpenAI API calls
-├── content.js             # Content script - page extraction
-├── sidebar.html           # Sidebar interface
-├── sidebar.js             # Sidebar functionality + TTS (OpenAI)
-├── sidebar.css            # Styling (dark theme)
-├── Readability.js         # Mozilla content extraction
-├── marked.min.js          # Markdown renderer
-├── pdf.min.js             # PDF processing
-├── pdf.worker.min.js      # PDF worker
-└── config.js              # API configuration (create this)
+├── manifest.json          # Extension manifest (MV3) - permissions & config
+├── background.js          # Service worker - OpenAI API integration
+├── content.js             # Content script - Readability.js extraction
+├── sidebar.html           # UI structure
+├── sidebar.js             # Main logic, state, TTS, file handling
+├── sidebar.css            # Styling (dark theme, Slate palette)
+├── Readability.js         # Mozilla content extraction library
+├── marked.min.js          # Markdown to HTML renderer
+├── pdf.min.js             # PDF.js library
+├── pdf.worker.min.js      # PDF.js worker thread
+├── config.js              # API keys (gitignored - create this)
+└── CLAUDE.md              # Development guide for Claude Code
 ```
+
+## Troubleshooting
+
+**TTS not working**:
+- Ensure `config.js` has valid `OPENAI_API_KEY`
+- Click the sidebar once to resume AudioContext (browser autoplay policy)
+- Check browser console for errors
+
+**Content not extracted**:
+- Page may be restricted (chrome://, file://, chrome-extension://)
+- Readability couldn't parse (falls back to raw text)
+- Check that the extension has permission to access the tab
+
+**API errors**:
+- Verify `config.js` has valid OpenAI API key
+- Check OpenAI API quotas and billing
+- Ensure API key has access to both chat and TTS endpoints
+
+**PDF text extraction fails**:
+- Large PDFs may exceed processing limits
+- Check browser console for PDF.js errors
+
+**Chat history lost**:
+- Browser clearing localStorage data
+- Storage quota exceeded (~5MB limit)
+- Try exporting your chats before clearing browser data
 
 ## Security
 
-- HTML sanitization for all AI responses
-- Strict Content Security Policy
-- Minimal permissions approach
+- HTML sanitization for all AI responses (removes scripts and event handlers)
+- Strict Content Security Policy (`script-src 'self'`)
+- API keys stored locally in `config.js` (never sent to third parties)
+- Minimal permissions approach (only what's necessary)
+- Content extraction happens locally in the browser
 - Secure API key handling (user-provided)
 
 ## License
