@@ -54,10 +54,14 @@ class OpenAITTS {
 
         // Cache audio buffers by text
         this.audioCache = new Map();
+        this.MAX_CACHE_SIZE = 10; // Limit cache to prevent memory issues
 
         // Seek State
         this.currentOffset = 0;
         this.startTime = 0;
+
+        // Track current text for resume functionality
+        this.currentText = null;
     }
 
     async initAudioContext() {
@@ -72,6 +76,16 @@ class OpenAITTS {
 
     async prepare() {
         await this.initAudioContext();
+    }
+
+    // Cleanup old cache entries to prevent memory issues
+    cleanupCache() {
+        if (this.audioCache.size > this.MAX_CACHE_SIZE) {
+            const keys = Array.from(this.audioCache.keys());
+            // Remove oldest entries (first 3)
+            keys.slice(0, 3).forEach(key => this.audioCache.delete(key));
+            console.log(`TTS cache cleaned: ${this.audioCache.size} entries remaining`);
+        }
     }
 
     async generateSpeech(text) {
@@ -121,6 +135,7 @@ class OpenAITTS {
             const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
 
             this.audioCache.set(text, audioBuffer);
+            this.cleanupCache(); // Prevent memory leaks
             return audioBuffer;
         } catch (error) {
             console.error('OpenAI TTS Error:', error);
@@ -134,6 +149,8 @@ class OpenAITTS {
         const source = this.audioContext.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(this.audioContext.destination);
+
+        this.lastOnEnded = onEnded; // Save for seek functionality
 
         source.onended = () => {
             if (this.currentSource === source) {
@@ -235,7 +252,72 @@ function setupEventListeners() {
             openLightbox(e.target.src);
         }
     });
+
+    // Global Keyboard Shortcuts
+    document.addEventListener('keydown', handleKeyboardShortcuts);
 }
+
+// Keyboard Shortcuts Handler
+function handleKeyboardShortcuts(e) {
+    // Check if user is typing in input (don't trigger shortcuts)
+    const isTyping = document.activeElement === chatInput;
+
+    // Ctrl/Cmd + Enter: Send message (works even while typing)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (chatInput.value.trim()) {
+            sendMessage();
+        }
+        return;
+    }
+
+    // Don't process other shortcuts if user is typing in input
+    if (isTyping) return;
+
+    // Ctrl/Cmd + K: Focus input
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        chatInput.focus();
+        return;
+    }
+
+    // Ctrl/Cmd + N: New chat
+    if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+        e.preventDefault();
+        createNewChat();
+        return;
+    }
+
+    // Ctrl/Cmd + H: Toggle history
+    if ((e.ctrlKey || e.metaKey) && e.key === 'h') {
+        e.preventDefault();
+        toggleHistory();
+        return;
+    }
+
+    // Ctrl/Cmd + L: Clear input
+    if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
+        e.preventDefault();
+        chatInput.value = '';
+        autoResizeInput();
+        return;
+    }
+
+    // Esc: Close overlays
+    if (e.key === 'Escape') {
+        // Close lightbox if open
+        if (lightbox.classList.contains('active')) {
+            closeLightbox();
+            return;
+        }
+        // Close history if open
+        if (isHistoryOpen) {
+            toggleHistory();
+            return;
+        }
+    }
+}
+
 
 // Lightbox Logic
 function openLightbox(src) {
@@ -306,13 +388,15 @@ function processFile(file) {
 
 // Input Auto-Resize
 function setupInputAutoResize() {
-    chatInput.addEventListener('input', function () {
-        this.style.height = 'auto';
-        this.style.height = (this.scrollHeight) + 'px'; // No max-height limit? CSS handles it? 
-        if (this.value === '') {
-            this.style.height = 'auto'; // Reset min h
-        }
-    });
+    chatInput.addEventListener('input', autoResizeInput);
+}
+
+function autoResizeInput() {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = (chatInput.scrollHeight) + 'px';
+    if (chatInput.value === '') {
+        chatInput.style.height = 'auto';
+    }
 }
 
 // File Handling
@@ -322,6 +406,9 @@ async function handleFileSelection(event) {
 
     // Reset current attachment
     currentAttachment = null;
+
+    // Show processing indicator
+    const processingId = showFileProcessing(file.name);
 
     try {
         if (file.type.startsWith('image/')) {
@@ -350,37 +437,18 @@ async function handleFileSelection(event) {
         }
         renderPreview();
     } catch (e) {
-        console.error('File read error:', e);
-        alert('Error reading file: ' + e.message);
+        displayError(`Failed to process file "${file.name}": ${e.message}`, ErrorTypes.FILE);
+    } finally {
+        hideFileProcessing(processingId);
     }
 
     // Reset input so same file can be selected again
     fileInput.value = '';
 }
 
-async function playTTS(text) {
-    if (!text) return;
-
-    // Wake up audio engine immediately on interaction
-    await tts.prepare();
-
-    const btn = document.querySelector('.speak-btn[data-playing="true"]');
-    if (btn) btn.setAttribute('data-playing', 'false'); // Reset others
-
-    try {
-
-        const audioBuffer = await tts.generateSpeech(text);
-        tts.play(audioBuffer, () => {
-            // On ended
-            const activeBtn = document.querySelector(`.speak-btn[data-text="${text.substring(0, 20)}..."]`); // Simplified selector logic
-            // In reality, we passed the button or managed state differently. 
-            // We'll rely on the existing UI toggle if it was working, or add one.
-        });
-    } catch (e) {
-        console.error("TTS Error", e);
-        alert("Failed to play audio: " + e.message);
-    }
-}
+// This function is not used in the current implementation
+// TTS is handled directly in the message rendering via ttsBtn.onclick
+// Keeping for potential future use
 
 function convertFileToBase64(file) {
     return new Promise((resolve, reject) => {
@@ -770,7 +838,6 @@ function appendMessageToUI(role, content, id = null, attachment = null) {
 
                 try {
                     // Check if we are resuming the SAME message
-                    // We need to know if 'content' matches tts.currentText
                     let offsetToUse = 0;
                     if (tts.currentText === content && tts.currentOffset > 0) {
                         offsetToUse = tts.currentOffset;
@@ -807,6 +874,11 @@ function appendMessageToUI(role, content, id = null, attachment = null) {
                     ttsBtn.classList.remove('loading');
                     ttsBtn.style.color = '#ef4444';
                     setTimeout(() => ttsBtn.style.color = '', 2000);
+                    // Show user-friendly error message
+                    const errorMsg = e.message?.includes('401') || e.message?.includes('403')
+                        ? 'TTS authentication failed. Check your OpenAI API key.'
+                        : `TTS failed: ${e.message || 'Unknown error'}`;
+                    displayError(errorMsg, ErrorTypes.TTS);
                 }
             }
         };
@@ -971,6 +1043,14 @@ async function sendMessage() {
     const text = chatInput.value.trim();
     if (!text && !currentAttachment) return;
 
+    // Validate config first
+    try {
+        validateConfig();
+    } catch (err) {
+        displayError(err.message, ErrorTypes.VALIDATION);
+        return;
+    }
+
     // Clear input
     chatInput.value = '';
     chatInput.style.height = 'auto';
@@ -997,9 +1077,12 @@ async function sendMessage() {
 
     // Add user message to state
     const currentChat = chats.find(c => c.id === currentChatId);
-    if (!currentChat) return;
+    if (!currentChat) {
+        displayError('No active chat found. Please create a new chat.', ErrorTypes.VALIDATION);
+        return;
+    }
 
-    // Store message in history (simplified for storage)
+    // Store message in history
     // If it's a file content, we might append it to text or just store metadata?
     // For simplicity, if it's text file, append to content. If image, store separately or as base64?
     // Storing large base64 in local storage is risky (quota). 
@@ -1023,126 +1106,140 @@ async function sendMessage() {
     // Update title if needed
     updateChatTitle(currentChatId, text || "File Upload");
 
-    saveChats();
+    // Save with error handling
+    try {
+        saveChats();
+    } catch (err) {
+        displayError('Failed to save chat history. Storage may be full.', ErrorTypes.VALIDATION);
+        // Continue anyway - the message is already in memory
+    }
 
     // UI Display
     appendMessageToUI('User', text, null, attachment);
 
-    // Send payload
-    await sendToAI(text, { attachment });
+    // Set loading state
+    setLoadingState(true);
+
+    // Send payload with retry logic
+    try {
+        await withRetry(() => sendToAI(text, { attachment }), 2, 1000);
+    } catch (err) {
+        const retryCallback = () => sendToAI(text, { attachment });
+
+        if (err.message?.includes('401') || err.message?.includes('403')) {
+            displayError('Authentication failed. Please check your OpenAI API key in config.js.', ErrorTypes.AUTH);
+        } else if (err.message?.includes('429')) {
+            displayError('Rate limit exceeded. Please wait a moment before trying again.', ErrorTypes.API, retryCallback);
+        } else if (err.message?.includes('network') || err.message?.includes('fetch')) {
+            displayError('Network error. Please check your internet connection.', ErrorTypes.NETWORK, retryCallback);
+        } else {
+            displayError(err.message || 'Failed to communicate with AI.', ErrorTypes.API, retryCallback);
+        }
+    } finally {
+        setLoadingState(false);
+    }
 }
 
 async function sendToAI(text, options = {}) {
     const currentChat = chats.find(c => c.id === currentChatId);
 
+    // Get Page Metadata
+    // CRITICAL FIX: Target 'normal' window to ignore Side Panel focus
+    // This ensures we get the actual browser tab, not the extension context
+    const currentWindow = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+    const [tab] = await chrome.tabs.query({ active: true, windowId: currentWindow.id });
+
+    if (!tab) throw new Error("No active tab found in main window");
+    console.log(`Targeting Real Tab: [${tab.id}] "${tab.title}"`);
+
+    let metadata = { url: tab.url, title: tab.title };
+
+    // Force FRESH content extraction via direct injection
+    // This avoids message passing failures or stale content from cached scripts
     try {
-        // Get Page Metadata
-        // CRITICAL FIX: Target 'normal' window to ignore Side Panel focus
-        // This ensures we get the actual browser tab, not the extension context
-        const currentWindow = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
-        const [tab] = await chrome.tabs.query({ active: true, windowId: currentWindow.id });
-
-        if (!tab) throw new Error("No active tab found in main window");
-        console.log(`Targeting Real Tab: [${tab.id}] "${tab.title}"`);
-
-        let metadata = { url: tab.url, title: tab.title };
-
-        // Force FRESH content extraction via direct injection
-        // This avoids message passing failures or stale content from cached scripts
-        try {
-            if (tab.url && tab.url.startsWith('http')) {
-                // 1. Inject Readability.js library first
-                await chrome.scripting.executeScript({
-                    target: { tabId: tab.id },
-                    files: ['Readability.js']
-                });
-
-                // 2. Run extraction logic using the now-available Readability object
-                const result = await chrome.scripting.executeScript({
-                    target: { tabId: tab.id },
-                    func: () => {
-                        try {
-                            // Try Readability first
-                            // We need to clone the document to avoid modifying the tailored page
-                            const documentClone = document.cloneNode(true);
-                            // Readability might not be defined if injection failed, so check
-                            if (typeof Readability !== 'undefined') {
-                                const reader = new Readability(documentClone);
-                                const article = reader.parse();
-                                if (article && article.textContent) {
-                                    return {
-                                        url: window.location.href,
-                                        title: article.title || document.title,
-                                        domain: window.location.hostname,
-                                        mainContent: article.textContent.replace(/\s+/g, ' ').trim().substring(0, 15000)
-                                    };
-                                }
-                            }
-
-                            // Fallback to raw innerText
-                            const raw = document.body.innerText.replace(/\s+/g, ' ').trim().substring(0, 15000);
-                            return {
-                                url: window.location.href,
-                                title: document.title,
-                                domain: window.location.hostname,
-                                mainContent: raw || "No readable content found."
-                            };
-                        } catch (e) {
-                            return null;
-                        }
-                    }
-                });
-
-                if (result && result[0] && result[0].result) {
-                    metadata = result[0].result;
-                    console.log('Fresh content extracted via Readability injection');
-                }
-
-                if (result && result[0] && result[0].result) {
-                    metadata = result[0].result;
-                    console.log('Fresh content extracted via injection');
-                }
-            }
-        } catch (e) {
-            console.warn('Script injection failed (likely restricted page):', e);
-        }
-
-        // Prepare History (Last 10 messages for context)
-        const history = currentChat.messages.slice(-10).map(m => ({
-            role: m.role === 'User' ? 'user' : 'assistant',
-            content: m.content
-        }));
-
-        // Send to Background
-        const loadingId = 'loading-' + Date.now();
-        appendMessageToUI('System', 'Thinking...', loadingId);
-
-        try {
-            const response = await chrome.runtime.sendMessage({
-                type: 'ASK_AI',
-                apiKey: null, // RefConfig: Handled in background.js
-                question: text,
-                metadata: metadata,
-                history: history,
-                attachment: options.attachment // Pass attachment to background
+        if (tab.url && tab.url.startsWith('http')) {
+            // 1. Inject Readability.js library first
+            await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                files: ['Readability.js']
             });
 
-            if (response.error) {
-                appendMessageToUI('System', `Error: ${response.error}`);
-            } else {
-                const aiResponse = response.answer;
-                currentChat.messages.push({ role: 'AI', content: aiResponse });
-                saveChats();
-                appendMessageToUI('AI', aiResponse);
+            // 2. Run extraction logic using the now-available Readability object
+            const result = await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                func: () => {
+                    try {
+                        // Try Readability first
+                        // We need to clone the document to avoid modifying the tailored page
+                        const documentClone = document.cloneNode(true);
+                        // Readability might not be defined if injection failed, so check
+                        if (typeof Readability !== 'undefined') {
+                            const reader = new Readability(documentClone);
+                            const article = reader.parse();
+                            if (article && article.textContent) {
+                                return {
+                                    url: window.location.href,
+                                    title: article.title || document.title,
+                                    domain: window.location.hostname,
+                                    mainContent: article.textContent.replace(/\s+/g, ' ').trim().substring(0, 15000)
+                                };
+                            }
+                        }
+
+                        // Fallback to raw innerText
+                        const raw = document.body.innerText.replace(/\s+/g, ' ').trim().substring(0, 15000);
+                        return {
+                            url: window.location.href,
+                            title: document.title,
+                            domain: window.location.hostname,
+                            mainContent: raw || "No readable content found."
+                        };
+                    } catch (e) {
+                        return null;
+                    }
+                }
+            });
+
+            if (result && result[0] && result[0].result) {
+                metadata = result[0].result;
+                console.log('Fresh content extracted via script injection');
             }
-        } finally {
-            const loadingMsg = document.getElementById(loadingId);
-            if (loadingMsg) loadingMsg.remove();
+        }
+    } catch (e) {
+        console.warn('Script injection failed (likely restricted page):', e);
+    }
+
+    // Prepare History (Last 10 messages for context)
+    const history = currentChat.messages.slice(-10).map(m => ({
+        role: m.role === 'User' ? 'user' : 'assistant',
+        content: m.content
+    }));
+
+    // Send to Background
+    const loadingId = 'loading-' + Date.now();
+    appendMessageToUI('System', 'Thinking...', loadingId);
+
+    try {
+        const response = await chrome.runtime.sendMessage({
+            type: 'ASK_AI',
+            apiKey: null, // RefConfig: Handled in background.js
+            question: text,
+            metadata: metadata,
+            history: history,
+            attachment: options.attachment // Pass attachment to background
+        });
+
+        if (response.error) {
+            throw new Error(response.error);
         }
 
-    } catch (error) {
-        console.error('Error sending message:', error);
-        appendMessageToUI('System', 'Error communicating with AI.');
+        const aiResponse = response.answer;
+        currentChat.messages.push({ role: 'AI', content: aiResponse });
+        saveChats();
+        appendMessageToUI('AI', aiResponse);
+    } finally {
+        const loadingMsg = document.getElementById(loadingId);
+        if (loadingMsg) loadingMsg.remove();
     }
 }
 // Basic HTML Sanitizer
@@ -1165,4 +1262,171 @@ function sanitizeHTML(html) {
     });
 
     return template.innerHTML;
+}
+
+// --- Enhanced Error Handling System ---
+
+// Error types for categorization
+const ErrorTypes = {
+    NETWORK: 'Network Error',
+    API: 'API Error',
+    AUTH: 'Authentication Error',
+    CONTENT: 'Content Extraction Error',
+    FILE: 'File Processing Error',
+    TTS: 'TTS Error',
+    VALIDATION: 'Validation Error'
+};
+
+// Display error message to user with consistent styling
+function displayError(message, type = 'Error', retryCallback = null) {
+    const errorId = 'error-' + Date.now();
+    const errorContent = `**${type}**\n\n${message}`;
+
+    appendMessageToUI('System', errorContent, errorId);
+
+    // Add retry button if callback provided
+    if (retryCallback) {
+        setTimeout(() => {
+            const errorElement = document.getElementById(errorId);
+            if (errorElement) {
+                const retryBtn = document.createElement('button');
+                retryBtn.textContent = '🔄 Retry';
+                retryBtn.className = 'retry-btn';
+                retryBtn.style.cssText = 'margin-top: 8px; padding: 6px 12px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;';
+                retryBtn.onclick = async () => {
+                    errorElement.remove();
+                    try {
+                        await retryCallback();
+                    } catch (err) {
+                        displayError(err.message || 'Retry failed', type);
+                    }
+                };
+                errorElement.appendChild(retryBtn);
+            }
+        }, 100);
+    }
+
+    console.error(`[${type}] ${message}`);
+}
+
+// Retry wrapper for API calls
+async function withRetry(asyncFn, maxRetries = 2, delayMs = 1000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await asyncFn();
+        } catch (error) {
+            if (attempt === maxRetries) throw error;
+
+            // Don't retry on certain errors
+            if (error.message?.includes('401') || error.message?.includes('403')) {
+                throw error;
+            }
+
+            console.warn(`Attempt ${attempt} failed, retrying...`, error);
+            await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+        }
+    }
+}
+
+// Validate API key exists
+function validateConfig() {
+    if (!CONFIG || !CONFIG.OPENAI_API_KEY) {
+        throw new Error('OpenAI API key not found. Please create a config.js file with your API key.');
+    }
+}
+
+// --- Loading State Management ---
+
+// Show/hide send button loading state
+function setLoadingState(isLoading) {
+    const sendBtn = document.getElementById('sendBtn');
+    if (!sendBtn) return;
+
+    if (isLoading) {
+        sendBtn.classList.add('loading');
+        sendBtn.disabled = true;
+        // Replace icon with spinner
+        sendBtn.innerHTML = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spinner">
+                <circle cx="12" cy="12" r="10" stroke-opacity="0.2"></circle>
+                <path d="M12 2a10 10 0 0 1 10 10">
+                    <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/>
+                </path>
+            </svg>
+        `;
+    } else {
+        sendBtn.classList.remove('loading');
+        sendBtn.disabled = false;
+        // Restore original icon
+        sendBtn.innerHTML = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+        `;
+    }
+}
+
+// Show file processing indicator
+function showFileProcessing(filename) {
+    const processingId = 'file-processing-' + Date.now();
+    appendMessageToUI('System', `Processing file: ${filename}...`, processingId);
+    return processingId;
+}
+
+function hideFileProcessing(processingId) {
+    const element = document.getElementById(processingId);
+    if (element) element.remove();
+}
+
+// Show global loading overlay (for critical operations)
+function showGlobalLoading(message) {
+    let overlay = document.getElementById('globalLoadingOverlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'globalLoadingOverlay';
+        overlay.className = 'global-loading-overlay';
+        overlay.innerHTML = `
+            <div class="global-loading-content">
+                <div class="global-loading-spinner"></div>
+                <div class="global-loading-text">${message}</div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+    } else {
+        const text = overlay.querySelector('.global-loading-text');
+        if (text) text.textContent = message;
+    }
+}
+
+function hideGlobalLoading() {
+    const overlay = document.getElementById('globalLoadingOverlay');
+    if (overlay) overlay.remove();
+}
+
+// Safe file reading with error handling
+async function safeFileRead(file, method = 'readAsText') {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
+        reader.onabort = () => reject(new Error(`File read aborted: ${file.name}`));
+
+        // Timeout after 30 seconds
+        const timeout = setTimeout(() => {
+            reader.abort();
+            reject(new Error(`File read timeout: ${file.name}`));
+        }, 30000);
+
+        try {
+            if (method === 'readAsText') reader.readAsText(file);
+            else if (method === 'readAsDataURL') reader.readAsDataURL(file);
+            else if (method === 'readAsArrayBuffer') reader.readAsArrayBuffer(file);
+        } catch (err) {
+            clearTimeout(timeout);
+            reject(err);
+        }
+    });
 }
