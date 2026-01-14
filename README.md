@@ -14,6 +14,8 @@ A powerful Chrome browser extension that provides an AI-powered sidebar assistan
 - **Markdown Rendering**: Beautiful rendering of AI responses with syntax highlighting
 - **Chat History**: Persistent conversation history stored locally
 - **Multi-modal Support**: Send text + images together for analysis
+- **Keyboard Shortcuts**: Quick access with Ctrl/Cmd+Enter (send), Ctrl/Cmd+K (focus), Ctrl/Cmd+N (new chat), Ctrl/Cmd+H (history), Ctrl/Cmd+L (clear), Esc (close overlays)
+- **Enhanced UI**: Centered header title, gradient send button with loading states
 
 ## Installation
 
@@ -30,6 +32,15 @@ A powerful Chrome browser extension that provides an AI-powered sidebar assistan
 2. Ask questions about the current webpage
 3. Use the TTS controls to listen to responses
 4. Attach files by dragging them into the sidebar or using paste (Ctrl+V)
+
+### Keyboard Shortcuts
+
+- **Ctrl/Cmd + Enter**: Send message (works while typing)
+- **Ctrl/Cmd + K**: Focus input field
+- **Ctrl/Cmd + N**: Start new chat
+- **Ctrl/Cmd + H**: Toggle history drawer
+- **Ctrl/Cmd + L**: Clear input field
+- **Esc**: Close overlays (lightbox, history drawer)
 
 ## Supported AI APIs
 
@@ -72,7 +83,8 @@ To use the extension, you must provide a valid `OPENAI_API_KEY`. You can get one
   - Readability.js (Mozilla) - Content extraction
   - marked.min.js - Markdown rendering
   - pdf.min.js / pdf.worker.min.js - PDF processing
-- **Audio Handling**: Manual PCM decoding for seekable playback
+- **Audio Handling**: Manual PCM decoding for seekable playback with caching (max 10 entries)
+- **UI Enhancements**: Centered header title, gradient send button, loading states, keyboard shortcuts
 
 ## Project Structure
 
@@ -116,7 +128,6 @@ AI_sidebar/
 **Chat history lost**:
 - Browser clearing localStorage data
 - Storage quota exceeded (~5MB limit)
-- Try exporting your chats before clearing browser data
 
 ## Security
 
