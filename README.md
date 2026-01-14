@@ -1,6 +1,6 @@
 # AI Sidebar Assistant
 
-A powerful Chrome browser extension that provides an AI-powered sidebar assistant for analyzing webpage content and answering questions. Now powered by **Grok 4.1 Fast** via **OpenRouter**!
+A powerful Chrome browser extension that provides an AI-powered sidebar assistant for analyzing webpage content and answering questions. Now powered by **Grok 4.1 Fast** via **ZenMux**!
 
 ## Features
 
@@ -15,10 +15,11 @@ A powerful Chrome browser extension that provides an AI-powered sidebar assistan
 ## Installation
 
 1. Clone this repository or download the extension files
-2. Open Chrome and navigate to `chrome://extensions/`
-3. Enable "Developer mode" in the top right
-4. Click "Load unpacked" and select the extension folder
-5. The extension should now be installed and ready to use
+2. Create a `config.js` file in the root directory (see Configuration below)
+3. Open Chrome and navigate to `chrome://extensions/`
+4. Enable "Developer mode" in the top right
+5. Click "Load unpacked" and select the extension folder
+6. The extension should now be installed and ready to use
 
 ## Usage
 
@@ -29,23 +30,23 @@ A powerful Chrome browser extension that provides an AI-powered sidebar assistan
 
 ## Supported AI APIs
 
-- **OpenRouter** (Grok 4.1 Fast, and other models)
+- **ZenMux** (Grok 4.1 Fast)
 - **Google Gemini** (via Google AI Studio for TTS)
 
 ## Configuration
 
-The `config.js` file is already configured with OpenRouter:
+The extension requires a `config.js` file in the root directory. Copy the following template:
 
 ```javascript
 const CONFIG = {
+    ZENMUX_API_KEY: 'sk-zm-...',     // Required: Your ZenMux API key
+    ZENMUX_MODEL: 'x-ai/grok-4.1-fast',
     GEMINI_TTS_API_KEY: 'your-gemini-tts-key',
-    TAVILY_API_KEY: 'your-tavily-key', // Optional
-    OPENROUTER_API_KEY: 'sk-or-v1-...',
-    OPENROUTER_MODEL: 'x-ai/grok-4.1-fast'
+    TAVILY_API_KEY: 'your-tavily-key' // Optional
 };
 ```
 
-To use your own OpenRouter API key, replace the `OPENROUTER_API_KEY` value.
+To use the extension, you must provide a valid `ZENMUX_API_KEY`.
 
 ## Technical Details
 
