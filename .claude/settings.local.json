@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command:*)",
+      "Bash(setx:*)",
+      "Bash(wsl --status:*)",
+      "Bash(git -C /c/Users/li_ca/Documents/myproject/AI_sidebar log --oneline --all)",
+      "Bash(ls:*)",
+      "Bash(du:*)"
+    ]
+  }
+}
