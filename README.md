@@ -90,18 +90,36 @@ To use the extension, you must provide a valid `OPENAI_API_KEY`. You can get one
 
 ```
 AI_sidebar/
-├── manifest.json          # Extension manifest (MV3) - permissions & config
-├── background.js          # Service worker - OpenAI API integration
-├── content.js             # Content script - Readability.js extraction
-├── sidebar.html           # UI structure
-├── sidebar.js             # Main logic, state, TTS, file handling
-├── sidebar.css            # Styling (dark theme, Slate palette)
-├── Readability.js         # Mozilla content extraction library
-├── marked.min.js          # Markdown to HTML renderer
-├── pdf.min.js             # PDF.js library
-├── pdf.worker.min.js      # PDF.js worker thread
-├── config.js              # API keys (gitignored - create this)
-└── CLAUDE.md              # Development guide for Claude Code
+├── manifest.json              # Extension manifest (MV3) - permissions & config
+├── background.js              # Service worker - OpenAI API integration
+├── content.js                 # Content script - Readability.js extraction
+├── sidebar.html               # UI structure
+├── sidebar.js                 # Simplified entry point (delegates to js/)
+├── sidebar.css                # Styling (dark theme, Slate palette)
+├── Readability.js             # Mozilla content extraction library
+├── marked.min.js              # Markdown to HTML renderer
+├── pdf.min.js                 # PDF.js library
+├── pdf.worker.min.js          # PDF.js worker thread
+├── config.js                  # API keys (gitignored - create this)
+├── CLAUDE.md                  # Development guide for Claude Code
+└── js/                        # Modular JavaScript architecture
+    ├── app.js                 # Application entry point
+    ├── components/            # UI components
+    │   ├── HistoryComponent.js    # Chat history management UI
+    │   ├── InputComponent.js      # Chat input handling & file uploads
+    │   ├── LightboxComponent.js   # Image preview modal
+    │   └── MessageComponent.js    # Message rendering (user/AI messages)
+    ├── services/              # Business logic services
+    │   ├── FileService.js         # File processing (images, PDFs, text)
+    │   ├── StorageService.js      # Local storage for chat history
+    │   └── TTSService.js          # Text-to-speech functionality
+    ├── store/                 # State management
+    │   ├── ChatStore.js           # Chat conversation state
+    │   └── store.js               # Global state management
+    └── utils/                 # Utility functions
+        ├── helpers.js             # Helper functions
+        ├── sanitizer.js           # HTML sanitization (XSS prevention)
+        └── validators.js          # Input validation
 ```
 
 ## Troubleshooting
