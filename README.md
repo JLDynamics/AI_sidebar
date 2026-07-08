@@ -1,10 +1,10 @@
 # AI Sidebar Assistant
 
-A Chrome extension that puts an AI assistant in your browser's side panel for analyzing webpage content and answering questions — with **swappable model providers**: cheap models (DeepSeek, GLM, Kimi) for everyday browsing, routed either directly or through a local **Claude Code bridge**.
+A Chrome extension that puts an AI assistant in your browser's side panel for analyzing webpage content and answering questions — with **swappable model providers**: cheap models (e.g. DeepSeek) for everyday browsing, routed through a local **Claude Code bridge** — or any OpenAI-compatible API directly.
 
 ## Features
 
-- **Multi-provider model picker**: Switch between DeepSeek, OpenRouter, Claude, and OpenCode Go models per message, right from the chat box — plus a think-effort setting (low/medium/high)
+- **Multi-provider model picker**: Switch between DeepSeek, OpenRouter, and Claude models per message, right from the chat box — plus a think-effort setting (low/medium/high)
 - **Claude Code bridge**: A small local Python (FastAPI) server that runs Claude Code headless with third-party backends (DeepSeek/OpenRouter), so no claude.ai subscription is consumed
 - **AI-Powered Q&A**: Ask questions about the current webpage, with multi-modal support
 - **Per-message metadata**: Each answer shows which provider/model responded, estimated cost, and duration
@@ -40,7 +40,7 @@ uvicorn server:app --port 8765
 
 Health check: http://127.0.0.1:8765/health — you want `"claude_cli_found": true`.
 
-The bridge only needs to run when you use a bridge provider; direct API providers (e.g. OpenCode Go) work without it.
+The bridge only needs to run when you use a bridge provider; direct OpenAI-compatible providers work without it.
 
 ## Configuration
 
@@ -66,14 +66,14 @@ const CONFIG = {
         'openrouter': { label: 'openrouter', type: 'bridge', provider: 'openrouter', models: ['tencent/hy3:free'] },
         'claude':     { label: 'claude',     type: 'bridge', provider: 'claude',     models: ['default'] },
 
-        // type 'openai' -> direct OpenAI-compatible API
-        'opencode-go': {
-            label: 'opencode go',
-            type: 'openai',
-            baseUrl: 'https://opencode.ai/zen/go/v1',
-            apiKey: 'YOUR_OPENCODE_KEY',
-            models: ['glm-5.2', 'kimi-k2.7-code']
-        }
+        // type 'openai' -> direct OpenAI-compatible API (optional)
+        // 'my-provider': {
+        //     label: 'my provider',
+        //     type: 'openai',
+        //     baseUrl: 'https://api.example.com/v1',
+        //     apiKey: 'YOUR_KEY',
+        //     models: ['model-name']
+        // }
     }
 };
 ```

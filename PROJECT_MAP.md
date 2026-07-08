@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Chrome extension (Manifest V3) providing an AI sidebar for asking questions about the webpage you're viewing. Supports multiple swappable model providers — DeepSeek, OpenRouter, and Claude (via a local Python bridge to Claude Code), plus any direct OpenAI-compatible API (e.g. OpenCode Go). Features chat history, file/image attachments, TTS, markdown rendering, and a model/think-effort picker.
+A Chrome extension (Manifest V3) providing an AI sidebar for asking questions about the webpage you're viewing. Supports multiple swappable model providers — DeepSeek, OpenRouter, and Claude (via a local Python bridge to Claude Code), plus any direct OpenAI-compatible API. Features chat history, file/image attachments, TTS, markdown rendering, and a model/think-effort picker.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ Chrome side panel (sidebar.html + js/app.js)
   ▼
 background.js (service worker — provider router)
   ├─ type 'bridge' → http://127.0.0.1:8765 → bridge/server.py → claude -p → DeepSeek / OpenRouter / Claude
-  └─ type 'openai' → direct OpenAI-compatible API (OpenCode Go, ...)
+  └─ type 'openai' → direct OpenAI-compatible API (optional)
 ```
 
 State flows one way: components → ChatStore (pub/sub events) → localStorage → re-render.
@@ -64,7 +64,7 @@ AI_sidebar/
 `CONFIG.PROVIDERS` drives the model picker. Two types:
 
 - `type: 'bridge'` — request goes to the local Python bridge (port 8765), which runs Claude Code headless with per-provider env vars (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`). Providers: `deepseek`, `openrouter`, `claude`. Think-effort maps to `CLAUDE_CODE_EFFORT_LEVEL`.
-- `type: 'openai'` — direct `{baseUrl}/chat/completions` call with `apiKey`. Providers: `opencode-go` (and any other OpenAI-compatible endpoint you add).
+- `type: 'openai'` — direct `{baseUrl}/chat/completions` call with `apiKey`. None configured by default — add any OpenAI-compatible endpoint.
 
 Bridge API keys live in `bridge/.env` (gitignored). Direct-provider keys live in `config.js` (gitignored).
 
