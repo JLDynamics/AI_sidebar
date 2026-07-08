@@ -4,7 +4,7 @@
  */
 
 import { sanitizeHTML } from '../utils/sanitizer.js';
-import { getStore, StoreEvents } from '../store/store.js';
+import { getStore } from '../store/store.js';
 
 // Global copy function for code blocks
 window.copyToClipboard = function (btn) {
@@ -39,6 +39,12 @@ class MessageComponent {
         this.chatContainer = chatContainer;
         this.ttsService = ttsService;
         this.ttsButtons = new Map(); // Track TTS buttons by message content
+
+        // Close any open "..." menus on outside click
+        document.addEventListener('click', () => {
+            this.chatContainer.querySelectorAll('.more-menu.open')
+                .forEach(menu => menu.classList.remove('open'));
+        });
     }
 
     /**
@@ -56,8 +62,12 @@ class MessageComponent {
             return;
         }
 
-        currentChat.messages.forEach(msg => {
-            this.appendMessage(msg.role, msg.content);
+        currentChat.messages.forEach((msg, index) => {
+            this.appendMessage(msg.role, msg.content, null, null, msg.meta || null, {
+                timestamp: msg.timestamp,
+                index: index,
+                rating: msg.meta ? msg.meta.rating : null
+            });
         });
 
         this.scrollToBottom();
@@ -82,8 +92,10 @@ class MessageComponent {
      * @param {string} content - The message content
      * @param {string} id - Optional element ID
      * @param {Object} attachment - Optional attachment object
+     * @param {Object} meta - Optional metadata (provider, model, cost) shown as a footer
+     * @param {Object} opts - Optional {timestamp, index} for user message actions
      */
-    appendMessage(role, content, id = null, attachment = null) {
+    appendMessage(role, content, id = null, attachment = null, meta = null, opts = {}) {
         // Remove welcome message if present
         const welcome = this.chatContainer.querySelector('.welcome-message');
         if (welcome) welcome.remove();
@@ -114,7 +126,7 @@ class MessageComponent {
                 bubble.style.padding = '4px 12px';
             } else {
                 // Parse Markdown
-                let parsedContent = sanitizeHTML(marked.parse(content));
+                const parsedContent = sanitizeHTML(marked.parse(content));
 
                 // Code Block Injection for Copy Button
                 const tempDiv = document.createElement('div');
@@ -158,9 +170,30 @@ class MessageComponent {
 
         messageDiv.appendChild(bubble);
 
+        // Add metadata footer for AI messages (provider · model · cost · time)
+        if (role === 'AI' && meta) {
+            const parts = [];
+            if (meta.provider) parts.push(meta.provider);
+            if (meta.model) parts.push(meta.model);
+            if (typeof meta.cost_usd === 'number') parts.push(`~$${meta.cost_usd.toFixed(4)}`);
+            if (typeof meta.duration_ms === 'number') parts.push(`${(meta.duration_ms / 1000).toFixed(1)}s`);
+
+            if (parts.length > 0) {
+                const metaDiv = document.createElement('div');
+                metaDiv.className = 'message-meta';
+                metaDiv.textContent = parts.join(' · ');
+                messageDiv.appendChild(metaDiv);
+            }
+        }
+
         // Add Actions for AI messages
         if (role === 'AI') {
-            this._addMessageActions(messageDiv, content);
+            this._addMessageActions(messageDiv, content, opts);
+        }
+
+        // Add actions row for user messages (time ago · restart · edit · copy)
+        if (role === 'User' && typeof opts.index === 'number') {
+            this._addUserActions(messageDiv, content, opts);
         }
 
         this.chatContainer.appendChild(messageDiv);
@@ -168,82 +201,103 @@ class MessageComponent {
     }
 
     /**
-     * Adds action buttons (Copy, TTS) to AI messages
+     * Adds the action row under a user message
      * @param {HTMLElement} messageDiv - The message element
      * @param {string} content - The message content
+     * @param {Object} opts - {timestamp, index}
      * @private
      */
-    _addMessageActions(messageDiv, content) {
+    _addUserActions(messageDiv, content, opts) {
+        const row = document.createElement('div');
+        row.className = 'user-actions';
+
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'time-ago';
+        timeSpan.textContent = this._timeAgo(opts.timestamp || Date.now());
+        row.appendChild(timeSpan);
+
+        const createBtn = (title, svg, action) => {
+            const btn = document.createElement('button');
+            btn.className = 'action-btn';
+            btn.title = title;
+            btn.innerHTML = svg;
+            btn.onclick = () => {
+                if (action === 'copy') {
+                    this._copyTextToClipboard(content, btn);
+                } else if (this.onUserAction) {
+                    this.onUserAction(action, opts.index, content);
+                }
+            };
+            return btn;
+        };
+
+        // Restart conversation from here
+        row.appendChild(createBtn('Restart conversation from here',
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>`,
+            'restart'));
+
+        // Edit
+        row.appendChild(createBtn('Edit message',
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>`,
+            'edit'));
+
+        // Copy
+        row.appendChild(createBtn('Copy message',
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`,
+            'copy'));
+
+        messageDiv.appendChild(row);
+    }
+
+    /**
+     * Formats a timestamp as relative time, e.g. "23 minutes ago"
+     * @param {number} timestamp - Epoch milliseconds
+     * @returns {string}
+     * @private
+     */
+    _timeAgo(timestamp) {
+        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+        if (seconds < 60) return 'just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+        const days = Math.floor(hours / 24);
+        return `${days} day${days === 1 ? '' : 's'} ago`;
+    }
+
+    /**
+     * Adds the action row to AI messages:
+     * copy · speaker · thumbs up · thumbs down · "..." menu · time ago
+     * @param {HTMLElement} messageDiv - The message element
+     * @param {string} content - The message content
+     * @param {Object} opts - {timestamp, index}
+     * @private
+     */
+    _addMessageActions(messageDiv, content, opts = {}) {
         const actionsDiv = document.createElement('div');
         actionsDiv.className = 'message-actions';
 
-        // Copy Button
+        // Copy
         const copyMsgBtn = document.createElement('button');
-        copyMsgBtn.className = 'action-btn copy-msg-btn';
-        copyMsgBtn.title = 'Copy Message';
+        copyMsgBtn.className = 'action-btn';
+        copyMsgBtn.title = 'Copy message';
         copyMsgBtn.innerHTML = `
-             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
             </svg>
         `;
         copyMsgBtn.onclick = () => this._copyTextToClipboard(content, copyMsgBtn);
-
-        // TTS Controls
-        const ttsControls = this._createTTSControls(content);
         actionsDiv.appendChild(copyMsgBtn);
-        actionsDiv.appendChild(ttsControls);
-        messageDiv.appendChild(actionsDiv);
-    }
 
-    /**
-     * Creates TTS controls for a message
-     * @param {string} content - The message content
-     * @returns {HTMLElement} - TTS controls container
-     * @private
-     */
-    _createTTSControls(content) {
-        const ttsControls = document.createElement('div');
-        ttsControls.className = 'tts-controls';
-
-        const createBtn = (iconSvg, title, onClick) => {
-            const btn = document.createElement('button');
-            btn.className = 'action-btn tts-control-btn';
-            btn.title = title;
-            btn.innerHTML = iconSvg;
-            btn.onclick = onClick;
-            return btn;
-        };
-
-        // Rewind Button (-15s)
-        const rewindBtn = createBtn(
-            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 19l-9-7 9-7v14z"></path><path d="M22 19l-9-7 9-7v14z"></path></svg>`,
-            "Rewind 15s",
-            async (e) => {
-                e.preventDefault();
-                await this.ttsService.prepare();
-                this.ttsService.seek(-15);
-            }
-        );
-
-        // Forward Button (+15s)
-        const forwardBtn = createBtn(
-            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 19l9-7-9-7v14z"></path><path d="M2 19l9-7-9-7v14z"></path></svg>`,
-            "Forward 15s",
-            async (e) => {
-                e.preventDefault();
-                await this.ttsService.prepare();
-                this.ttsService.seek(15);
-            }
-        );
-
-        // Play/Stop Button
+        // Speaker (TTS play/pause)
         const ttsBtn = document.createElement('button');
         ttsBtn.className = 'action-btn tts-btn tts-main-btn';
         ttsBtn.title = 'Read aloud';
         ttsBtn.innerHTML = `
             <span class="tts-icon">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
                     <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
                 </svg>
@@ -254,7 +308,6 @@ class MessageComponent {
                 </svg>
             </span>
         `;
-
         ttsBtn.onclick = async () => {
             if (ttsBtn.classList.contains('playing')) {
                 this.ttsService.pause();
@@ -263,15 +316,85 @@ class MessageComponent {
                 await this._playTTS(ttsBtn, content);
             }
         };
-
-        // Store reference
         this.ttsButtons.set(content, ttsBtn);
+        actionsDiv.appendChild(ttsBtn);
 
-        ttsControls.appendChild(rewindBtn);
-        ttsControls.appendChild(ttsBtn);
-        ttsControls.appendChild(forwardBtn);
+        // Thumbs up / down
+        const rating = opts.rating || null;
+        const thumbUpBtn = document.createElement('button');
+        thumbUpBtn.className = 'action-btn thumb-btn';
+        thumbUpBtn.title = 'Good response';
+        thumbUpBtn.innerHTML = `
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path>
+            </svg>
+        `;
+        const thumbDownBtn = document.createElement('button');
+        thumbDownBtn.className = 'action-btn thumb-btn';
+        thumbDownBtn.title = 'Bad response';
+        thumbDownBtn.innerHTML = `
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path>
+            </svg>
+        `;
+        if (rating === 'up') thumbUpBtn.classList.add('active');
+        if (rating === 'down') thumbDownBtn.classList.add('active');
 
-        return ttsControls;
+        const handleThumb = (btn, other, value) => {
+            const nowActive = !btn.classList.contains('active');
+            btn.classList.toggle('active', nowActive);
+            other.classList.remove('active');
+            if (this.onAIRating && typeof opts.index === 'number') {
+                this.onAIRating(opts.index, nowActive ? value : null);
+            }
+        };
+        thumbUpBtn.onclick = () => handleThumb(thumbUpBtn, thumbDownBtn, 'up');
+        thumbDownBtn.onclick = () => handleThumb(thumbDownBtn, thumbUpBtn, 'down');
+        actionsDiv.appendChild(thumbUpBtn);
+        actionsDiv.appendChild(thumbDownBtn);
+
+        // "..." menu
+        const moreWrap = document.createElement('div');
+        moreWrap.className = 'more-wrap';
+        const moreBtn = document.createElement('button');
+        moreBtn.className = 'action-btn';
+        moreBtn.title = 'More';
+        moreBtn.innerHTML = `
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="5" cy="12" r="1.6"></circle>
+                <circle cx="12" cy="12" r="1.6"></circle>
+                <circle cx="19" cy="12" r="1.6"></circle>
+            </svg>
+        `;
+        const moreMenu = document.createElement('div');
+        moreMenu.className = 'more-menu';
+        const regenItem = document.createElement('button');
+        regenItem.className = 'more-item';
+        regenItem.textContent = 'Regenerate response';
+        regenItem.onclick = (e) => {
+            e.stopPropagation();
+            moreMenu.classList.remove('open');
+            if (this.onAIAction) this.onAIAction('regenerate', opts.index);
+        };
+        moreMenu.appendChild(regenItem);
+        moreBtn.onclick = (e) => {
+            e.stopPropagation();
+            const isOpen = moreMenu.classList.contains('open');
+            this.chatContainer.querySelectorAll('.more-menu.open')
+                .forEach(menu => menu.classList.remove('open'));
+            moreMenu.classList.toggle('open', !isOpen);
+        };
+        moreWrap.appendChild(moreBtn);
+        moreWrap.appendChild(moreMenu);
+        actionsDiv.appendChild(moreWrap);
+
+        // Time ago
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'time-ago';
+        timeSpan.textContent = this._timeAgo(opts.timestamp || Date.now());
+        actionsDiv.appendChild(timeSpan);
+
+        messageDiv.appendChild(actionsDiv);
     }
 
     /**
@@ -284,7 +407,7 @@ class MessageComponent {
         await this.ttsService.prepare();
 
         // Stop all other TTS buttons
-        this.ttsButtons.forEach((btn, key) => {
+        this.ttsButtons.forEach((btn) => {
             if (btn !== ttsBtn && btn.classList.contains('playing')) {
                 this._updateTTSButton(btn, false);
             }

@@ -1,0 +1,13 @@
+/**
+ * Shared constants
+ * Central place for storage keys and app-wide limits
+ */
+
+// localStorage key for the model picker selection
+export const SELECTION_STORAGE_KEY = 'ai-sidebar-selection';
+
+// How many past messages are sent to the AI as conversation context
+export const HISTORY_CONTEXT_MESSAGES = 10;
+
+// Maximum characters of page content sent to the AI
+export const MAX_PAGE_CHARS = 15000;

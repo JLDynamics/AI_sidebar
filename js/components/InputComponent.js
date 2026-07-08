@@ -40,9 +40,49 @@ class InputComponent {
             }
         });
 
-        // File upload button
-        this.uploadBtn.addEventListener('click', () => this.fileInput.click());
-        this.fileInput.addEventListener('change', (e) => this._handleFileSelection(e));
+        // "+" button toggles the attach menu (Add photo / Add file)
+        this.attachMenu = document.getElementById('attachMenu');
+        const attachPhotoBtn = document.getElementById('attachPhotoBtn');
+        const attachFileBtn = document.getElementById('attachFileBtn');
+
+        const FULL_ACCEPT = 'image/jpeg, image/png, image/webp, image/gif, .txt, .md, .js, .py, .html, .css, .json, .pdf';
+
+        this.uploadBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (this.attachMenu) {
+                this.attachMenu.classList.toggle('open');
+            } else {
+                this.fileInput.click();
+            }
+        });
+
+        if (attachPhotoBtn) {
+            attachPhotoBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.attachMenu.classList.remove('open');
+                this.fileInput.accept = 'image/jpeg, image/png, image/webp, image/gif';
+                this.fileInput.click();
+            });
+        }
+
+        if (attachFileBtn) {
+            attachFileBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.attachMenu.classList.remove('open');
+                this.fileInput.accept = '.txt, .md, .js, .py, .html, .css, .json, .pdf';
+                this.fileInput.click();
+            });
+        }
+
+        // Close attach menu on outside click, restore full accept list after use
+        document.addEventListener('click', () => {
+            if (this.attachMenu) this.attachMenu.classList.remove('open');
+        });
+
+        this.fileInput.addEventListener('change', (e) => {
+            this._handleFileSelection(e);
+            this.fileInput.accept = FULL_ACCEPT;
+        });
 
         // Paste support
         this.chatInput.addEventListener('paste', (e) => this._handlePaste(e));
@@ -50,14 +90,20 @@ class InputComponent {
         // Drag and drop
         this._setupDragAndDrop();
 
-        // Auto-resize textarea
-        this.chatInput.addEventListener('input', () => this._autoResizeInput());
+        // Auto-resize textarea + send button visibility
+        this.chatInput.addEventListener('input', () => {
+            this._autoResizeInput();
+            this._updateSendVisibility();
+        });
 
         // Subscribe to attachment changes
         const store = getStore();
         store.subscribe(StoreEvents.ATTACHMENT_CHANGED, () => {
             this._renderPreview();
+            this._updateSendVisibility();
         });
+
+        this._updateSendVisibility();
     }
 
     /**
@@ -86,6 +132,7 @@ class InputComponent {
 
         // Clear attachment
         store.setAttachment(null);
+        this._updateSendVisibility();
 
         // Trigger send callback
         if (this.onSendMessage) {
@@ -141,13 +188,6 @@ class InputComponent {
         } catch (e) {
             console.error('Failed to process file:', e);
             store.addMessage('System', `Failed to process file "${file.name}": ${e.message}`, 'error-' + Date.now());
-        } finally {
-            // Remove processing indicator
-            const currentChat = store.getCurrentChat();
-            if (currentChat) {
-                const processingMsg = currentChat.messages.find(m => m.content.includes(`Processing file: ${file.name}`));
-                // The processing message will be removed when we re-render
-            }
         }
     }
 
@@ -205,6 +245,15 @@ class InputComponent {
         if (files.length > 0) {
             await this._processFile(files[0]);
         }
+    }
+
+    /**
+     * Shows the send button only when there is text or an attachment
+     * @private
+     */
+    _updateSendVisibility() {
+        const hasContent = this.chatInput.value.trim().length > 0 || !!getStore().getAttachment();
+        this.sendBtn.classList.toggle('visible', hasContent);
     }
 
     /**
@@ -284,12 +333,13 @@ class InputComponent {
             this.sendBtn.classList.remove('loading');
             this.sendBtn.disabled = false;
             this.sendBtn.innerHTML = `
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13"></line>
-                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="19" x2="12" y2="5"></line>
+                    <polyline points="5 12 12 5 19 12"></polyline>
                 </svg>
             `;
+            this._updateSendVisibility();
         }
     }
 
@@ -306,6 +356,18 @@ class InputComponent {
     clear() {
         this.chatInput.value = '';
         this._autoResizeInput();
+        this._updateSendVisibility();
+    }
+
+    /**
+     * Sets the chat input value (used by "edit message")
+     * @param {string} text - The text to place in the input
+     */
+    setValue(text) {
+        this.chatInput.value = text;
+        this._autoResizeInput();
+        this._updateSendVisibility();
+        this.focus();
     }
 
     /**

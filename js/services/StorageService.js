@@ -86,7 +86,7 @@ class StorageService {
 
             // Handle quota exceeded error
             if (e.name === 'QuotaExceededError' || e.code === 22) {
-                this._cleanupOldEntries(key);
+                this._cleanupOldEntries();
                 try {
                     localStorage.setItem(key, JSON.stringify(value));
                     return true;
@@ -165,8 +165,8 @@ class StorageService {
         if (!this.available) return { used: 0, total: MAX_STORAGE_SIZE };
 
         let used = 0;
-        for (let key in localStorage) {
-            if (localStorage.hasOwnProperty(key)) {
+        for (const key in localStorage) {
+            if (Object.prototype.hasOwnProperty.call(localStorage, key)) {
                 used += getStringSize(localStorage[key]);
             }
         }
@@ -175,10 +175,9 @@ class StorageService {
 
     /**
      * Internal method to clean up old entries when quota is exceeded
-     * @param {string} excludeKey - Key to exclude from cleanup
      * @private
      */
-    _cleanupOldEntries(excludeKey) {
+    _cleanupOldEntries() {
         const chats = this.getChats();
         if (chats.length > 1) {
             // Keep only the most recent chat

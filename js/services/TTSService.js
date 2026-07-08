@@ -162,7 +162,7 @@ class TTSService {
         this.currentOffset = elapsed;
 
         if (this.currentSource) {
-            try { this.currentSource.stop(); } catch (e) { }
+            try { this.currentSource.stop(); } catch { /* already stopped */ }
             this.currentSource = null;
         }
         this.isPlaying = false;
@@ -175,7 +175,7 @@ class TTSService {
     seek(delta) {
         if (!this.currentAudioBuffer) return;
 
-        let baseTime = this.isPlaying
+        const baseTime = this.isPlaying
             ? (this.audioContext.currentTime - this.startTime)
             : this.currentOffset;
 
@@ -195,7 +195,7 @@ class TTSService {
      */
     stop(fullReset = true) {
         if (this.currentSource) {
-            try { this.currentSource.stop(); } catch (e) { }
+            try { this.currentSource.stop(); } catch { /* already stopped */ }
             this.currentSource = null;
         }
         this.isPlaying = false;

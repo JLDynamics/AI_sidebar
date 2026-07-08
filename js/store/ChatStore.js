@@ -182,7 +182,7 @@ class ChatStore {
      * @param {Object} attachment - Optional attachment object
      * @returns {Object} - The added message object
      */
-    addMessage(role, content, attachment = null) {
+    addMessage(role, content, attachment = null, meta = null) {
         const currentChat = this.getCurrentChat();
         if (!currentChat) {
             throw new Error('No active chat found');
@@ -203,6 +203,7 @@ class ChatStore {
             content: storedContent,
             timestamp: Date.now()
         };
+        if (meta) message.meta = meta;
 
         currentChat.messages.push(message);
         currentChat.lastUpdated = Date.now();
@@ -217,6 +218,38 @@ class ChatStore {
         this._notify(StoreEvents.CHATS_CHANGED);
 
         return message;
+    }
+
+    /**
+     * Sets (or clears) the thumbs rating on a message
+     * @param {number} index - The message index in the current chat
+     * @param {string|null} rating - 'up', 'down', or null to clear
+     */
+    setMessageRating(index, rating) {
+        const currentChat = this.getCurrentChat();
+        if (!currentChat || !currentChat.messages[index]) return;
+
+        const message = currentChat.messages[index];
+        message.meta = message.meta || {};
+        message.meta.rating = rating;
+        this._persist();
+    }
+
+    /**
+     * Removes all messages from the given index onward (inclusive).
+     * Used by "edit" and "restart conversation from here".
+     * @param {number} fromIndex - Index of the first message to remove
+     */
+    truncateMessages(fromIndex) {
+        const currentChat = this.getCurrentChat();
+        if (!currentChat) return;
+
+        currentChat.messages.splice(fromIndex);
+        currentChat.lastUpdated = Date.now();
+
+        this._persist();
+        this._notify(StoreEvents.CURRENT_CHAT_CHANGED);
+        this._notify(StoreEvents.CHATS_CHANGED);
     }
 
     /**

@@ -26,17 +26,17 @@ export function validateConfig(config) {
         throw new Error('Configuration object not found. Please create a config.js file.');
     }
 
-    if (!config.OPENAI_API_KEY) {
-        throw new Error('OpenAI API key not found. Please add OPENAI_API_KEY to your config.js file.');
+    if (!config.PROVIDERS || Object.keys(config.PROVIDERS).length === 0) {
+        throw new Error('No providers configured. Please add a PROVIDERS map to your config.js file.');
     }
 
-    if (typeof config.OPENAI_API_KEY !== 'string' || config.OPENAI_API_KEY.trim().length === 0) {
-        throw new Error('OpenAI API key must be a non-empty string.');
+    if (config.DEFAULT_PROVIDER && !config.PROVIDERS[config.DEFAULT_PROVIDER]) {
+        throw new Error(`DEFAULT_PROVIDER "${config.DEFAULT_PROVIDER}" is not defined in PROVIDERS.`);
     }
 
-    // Basic format validation for OpenAI API keys
-    if (!config.OPENAI_API_KEY.startsWith('sk-')) {
-        throw new Error('Invalid OpenAI API key format. API keys should start with "sk-".');
+    // OpenAI key is now only needed for TTS — warn instead of blocking startup
+    if (!config.OPENAI_API_KEY || !config.OPENAI_API_KEY.startsWith('sk-')) {
+        console.warn('No valid OPENAI_API_KEY in config.js — Text-to-Speech will be unavailable.');
     }
 }
 

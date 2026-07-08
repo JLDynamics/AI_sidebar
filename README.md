@@ -1,160 +1,173 @@
 # AI Sidebar Assistant
 
-A powerful Chrome browser extension that provides an AI-powered sidebar assistant for analyzing webpage content and answering questions. Now powered by **OpenAI**!
+A Chrome extension that puts an AI assistant in your browser's side panel for analyzing webpage content and answering questions — with **swappable model providers**: cheap models (DeepSeek, GLM, Kimi) for everyday browsing, routed either directly or through a local **Claude Code bridge**.
 
 ## Features
 
-- **AI-Powered Q&A**: Ask OpenAI questions about the current webpage content with multi-modal support
-- **Text-to-Speech (TTS)**: Listen to AI responses with OpenAI TTS (gpt-4o-mini-tts-2025-12-15) and playback controls (pause, resume, rewind, fast-forward)
-- **File Attachments**: Drag & drop or paste files (images, PDFs, text files) directly into the sidebar
-- **PDF Text Extraction**: Automatically extracts text from PDF files using PDF.js
-- **Image Preview**: Lightbox preview for attached images
-- **HTML Sanitization**: Secure handling of AI responses to prevent XSS attacks
-- **Content Analysis**: Uses Mozilla's Readability.js to extract clean page content
-- **Markdown Rendering**: Beautiful rendering of AI responses with syntax highlighting
+- **Multi-provider model picker**: Switch between DeepSeek, OpenRouter, Claude, and OpenCode Go models per message, right from the chat box — plus a think-effort setting (low/medium/high)
+- **Claude Code bridge**: A small local Python (FastAPI) server that runs Claude Code headless with third-party backends (DeepSeek/OpenRouter), so no claude.ai subscription is consumed
+- **AI-Powered Q&A**: Ask questions about the current webpage, with multi-modal support
+- **Per-message metadata**: Each answer shows which provider/model responded, estimated cost, and duration
+- **Message actions**: Copy, read aloud (TTS), thumbs up/down, regenerate; edit or restart the conversation from any of your messages
+- **Text-to-Speech (TTS)**: Listen to AI responses via OpenAI TTS with playback controls
+- **File Attachments**: Drag & drop or paste images, PDFs, and text files
+- **PDF Text Extraction**: Automatic text extraction via PDF.js
+- **Content Analysis**: Mozilla's Readability.js extracts clean page content
+- **Markdown Rendering**: Code blocks with copy buttons, tables, links
 - **Chat History**: Persistent conversation history stored locally
-- **Multi-modal Support**: Send text + images together for analysis
-- **Keyboard Shortcuts**: Quick access with Ctrl/Cmd+Enter (send), Ctrl/Cmd+K (focus), Ctrl/Cmd+N (new chat), Ctrl/Cmd+H (history), Ctrl/Cmd+L (clear), Esc (close overlays)
-- **Enhanced UI**: Centered header title, gradient send button with loading states
+- **Keyboard Shortcuts**: Ctrl/Cmd+Enter (send), Ctrl/Cmd+K (focus), Ctrl/Cmd+N (new chat), Ctrl/Cmd+H (history), Ctrl/Cmd+L (clear), Esc (close overlays)
 
 ## Installation
 
-1. Clone this repository or download the extension files
+### 1. Extension
+
+1. Clone this repository
 2. Create a `config.js` file in the root directory (see Configuration below)
 3. Open Chrome and navigate to `chrome://extensions/`
 4. Enable "Developer mode" in the top right
 5. Click "Load unpacked" and select the extension folder
-6. The extension should now be installed and ready to use
 
-## Usage
+### 2. Bridge server (for DeepSeek / OpenRouter / Claude providers)
 
-1. Click the extension icon in your Chrome toolbar to open the sidebar
-2. Ask questions about the current webpage
-3. Use the TTS controls to listen to responses
-4. Attach files by dragging them into the sidebar or using paste (Ctrl+V)
+Requires Python 3.10+ and the [Claude Code CLI](https://code.claude.com) on your PATH.
 
-### Keyboard Shortcuts
+```bash
+cd bridge
+pip install -r requirements.txt
+copy .env.example .env        # then put your DeepSeek/OpenRouter keys in .env
+uvicorn server:app --port 8765
+```
 
-- **Ctrl/Cmd + Enter**: Send message (works while typing)
-- **Ctrl/Cmd + K**: Focus input field
-- **Ctrl/Cmd + N**: Start new chat
-- **Ctrl/Cmd + H**: Toggle history drawer
-- **Ctrl/Cmd + L**: Clear input field
-- **Esc**: Close overlays (lightbox, history drawer)
+Health check: http://127.0.0.1:8765/health — you want `"claude_cli_found": true`.
 
-## Supported AI APIs
-
-- **OpenAI** (GPT-4o-mini for chat, gpt-4o-mini-tts-2025-12-15 for text-to-speech)
-- **TTS Voice**: Alloy (default)
-- **Audio Format**: Raw PCM (manually decoded for seeking support)
+The bridge only needs to run when you use a bridge provider; direct API providers (e.g. OpenCode Go) work without it.
 
 ## Configuration
 
-The extension requires a `config.js` file in the root directory. Copy the following template:
+Create `config.js` in the root directory (it's gitignored — your keys never get committed):
 
 ```javascript
 const CONFIG = {
-    OPENAI_API_KEY: 'sk-...',     // Required: Your OpenAI API key
-    OPENAI_MODEL: 'gpt-4o-mini'   // Optional: Defaults to gpt-4o-mini
+    // Only used for Text-to-Speech (optional)
+    OPENAI_API_KEY: 'sk-...',
+    OPENAI_MODEL: 'gpt-4o-mini',
+
+    // Python bridge server
+    BRIDGE_URL: 'http://127.0.0.1:8765',
+
+    // Default selection for the model picker
+    DEFAULT_PROVIDER: 'deepseek',
+    DEFAULT_MODEL: 'deepseek-v4-flash',
+    DEFAULT_EFFORT: 'medium',
+
+    PROVIDERS: {
+        // type 'bridge' -> local bridge -> Claude Code -> provider
+        'deepseek':   { label: 'deepseek',   type: 'bridge', provider: 'deepseek',   models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
+        'openrouter': { label: 'openrouter', type: 'bridge', provider: 'openrouter', models: ['tencent/hy3:free'] },
+        'claude':     { label: 'claude',     type: 'bridge', provider: 'claude',     models: ['default'] },
+
+        // type 'openai' -> direct OpenAI-compatible API
+        'opencode-go': {
+            label: 'opencode go',
+            type: 'openai',
+            baseUrl: 'https://opencode.ai/zen/go/v1',
+            apiKey: 'YOUR_OPENCODE_KEY',
+            models: ['glm-5.2', 'kimi-k2.7-code']
+        }
+    }
 };
 ```
 
-To use the extension, you must provide a valid `OPENAI_API_KEY`. You can get one from [OpenAI Platform](https://platform.openai.com/api-keys).
-
-**Note**: The extension uses the OpenAI Chat Completions API and Audio Speech API. Make sure your API key has access to both.
+Bridge provider keys (DeepSeek/OpenRouter) go in `bridge/.env`, not here.
 
 ## How It Works
 
-1. **Content Extraction**: When you ask a question, the extension injects a script into the active tab to extract page content using Readability.js (falls back to raw text)
-2. **AI Processing**: Your question + page content is sent to OpenAI's GPT-4o-mini API with a system prompt
-3. **Response**: AI response is rendered as markdown with syntax highlighting
-4. **TTS**: Click the speaker icon to generate and play audio using OpenAI TTS
-5. **History**: All conversations are saved locally in your browser
-
-## Technical Details
-
-- **Manifest Version**: 3 (Chrome Extension standard)
-- **Permissions**: activeTab, tabs, scripting, storage, sidePanel
-- **Content Security Policy**: `script-src 'self'; object-src 'self'`
-- **API Endpoints**:
-  - Chat: `https://api.openai.com/v1/chat/completions`
-  - TTS: `https://api.openai.com/v1/audio/speech`
-- **Libraries Used**:
-  - Readability.js (Mozilla) - Content extraction
-  - marked.min.js - Markdown rendering
-  - pdf.min.js / pdf.worker.min.js - PDF processing
-- **Audio Handling**: Manual PCM decoding for seekable playback with caching (max 10 entries)
-- **UI Enhancements**: Centered header title, gradient send button, loading states, keyboard shortcuts
+1. **Content Extraction**: The extension injects Readability.js into the active tab and extracts clean page content (raw-text fallback)
+2. **Routing**: Your question + page content + history is sent to the background service worker, which routes it based on the selected provider — either to the local bridge (which runs `claude -p` with per-provider `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` env) or directly to an OpenAI-compatible API
+3. **Response**: Rendered as markdown, with a footer showing provider · model · ~cost · duration
+4. **TTS**: Click the speaker icon to hear the response (OpenAI TTS)
+5. **History**: Conversations persist in localStorage
 
 ## Project Structure
 
 ```
 AI_sidebar/
-├── manifest.json              # Extension manifest (MV3) - permissions & config
-├── background.js              # Service worker - OpenAI API integration
+├── manifest.json              # Extension manifest (MV3)
+├── background.js              # Service worker - provider router (bridge / direct APIs)
 ├── content.js                 # Content script - Readability.js extraction
 ├── sidebar.html               # UI structure
-├── sidebar.js                 # Simplified entry point (delegates to js/)
-├── sidebar.css                # Styling (dark theme, Slate palette)
-├── Readability.js             # Mozilla content extraction library
-├── marked.min.js              # Markdown to HTML renderer
-├── pdf.min.js                 # PDF.js library
-├── pdf.worker.min.js          # PDF.js worker thread
-├── config.js                  # API keys (gitignored - create this)
-├── CLAUDE.md                  # Development guide for Claude Code
-└── js/                        # Modular JavaScript architecture
-    ├── app.js                 # Application entry point
-    ├── components/            # UI components
-    │   ├── HistoryComponent.js    # Chat history management UI
-    │   ├── InputComponent.js      # Chat input handling & file uploads
-    │   ├── LightboxComponent.js   # Image preview modal
-    │   └── MessageComponent.js    # Message rendering (user/AI messages)
-    ├── services/              # Business logic services
-    │   ├── FileService.js         # File processing (images, PDFs, text)
-    │   ├── StorageService.js      # Local storage for chat history
-    │   └── TTSService.js          # Text-to-speech functionality
-    ├── store/                 # State management
-    │   ├── ChatStore.js           # Chat conversation state
-    │   └── store.js               # Global state management
-    └── utils/                 # Utility functions
-        ├── helpers.js             # Helper functions
-        ├── sanitizer.js           # HTML sanitization (XSS prevention)
-        └── validators.js          # Input validation
+├── sidebar.css                # Styling (dark theme)
+├── config.js                  # Providers & keys (gitignored - create this)
+├── package.json               # npm run lint
+├── eslint.config.js           # ESLint flat config
+├── bridge/                    # Python bridge -> Claude Code
+│   ├── server.py              # FastAPI server (POST /chat, GET /health)
+│   ├── requirements.txt
+│   ├── .env.example           # Key template (copy to .env)
+│   └── README.md
+├── js/
+│   ├── app.js                 # Application entry point
+│   ├── components/
+│   │   ├── MessageComponent.js     # Message rendering + action rows
+│   │   ├── InputComponent.js       # Input, attach menu, drag-drop
+│   │   ├── ModelPickerComponent.js # Provider/model/effort popup
+│   │   ├── HistoryComponent.js     # Chat history drawer
+│   │   └── LightboxComponent.js    # Image preview modal
+│   ├── services/
+│   │   ├── PageService.js          # Active-tab content extraction
+│   │   ├── FileService.js          # File processing (images, PDFs, text)
+│   │   ├── StorageService.js       # localStorage wrapper
+│   │   └── TTSService.js           # Text-to-speech
+│   ├── store/
+│   │   ├── ChatStore.js            # Chat state + events
+│   │   └── store.js                # Singleton export
+│   └── utils/
+│       ├── constants.js            # Shared keys/limits
+│       ├── helpers.js              # Utilities
+│       ├── sanitizer.js            # HTML sanitization (XSS prevention)
+│       └── validators.js           # Input validation
+└── vendored: Readability.js, marked.min.js, pdf.min.js, pdf.worker.min.js
 ```
+
+## Development
+
+```bash
+npm install     # once
+npm run lint    # ESLint, should report 0 problems
+```
+
+After code changes: `chrome://extensions` → reload ⟳ the extension.
 
 ## Troubleshooting
 
+**"Bridge server not reachable"**:
+- Start it: `cd bridge && uvicorn server:app --port 8765`
+- Check http://127.0.0.1:8765/health
+
+**"Missing DEEPSEEK_API_KEY / OPENROUTER_API_KEY"**:
+- Add the key to `bridge/.env` and restart the bridge
+
+**Provider answers but claims to be a Claude model**:
+- Normal — Claude Code's prompt tells the model a Claude name; check the response footer or your provider dashboard for the truth
+
 **TTS not working**:
-- Ensure `config.js` has valid `OPENAI_API_KEY`
-- Click the sidebar once to resume AudioContext (browser autoplay policy)
-- Check browser console for errors
+- Requires a valid `OPENAI_API_KEY` in `config.js`
+- Click the sidebar once to resume AudioContext (autoplay policy)
 
 **Content not extracted**:
-- Page may be restricted (chrome://, file://, chrome-extension://)
-- Readability couldn't parse (falls back to raw text)
-- Check that the extension has permission to access the tab
-
-**API errors**:
-- Verify `config.js` has valid OpenAI API key
-- Check OpenAI API quotas and billing
-- Ensure API key has access to both chat and TTS endpoints
-
-**PDF text extraction fails**:
-- Large PDFs may exceed processing limits
-- Check browser console for PDF.js errors
+- Page may be restricted (chrome://, file://, web store)
+- Readability falls back to raw text automatically
 
 **Chat history lost**:
-- Browser clearing localStorage data
-- Storage quota exceeded (~5MB limit)
+- localStorage cleared or quota exceeded (~5MB limit)
 
 ## Security
 
 - HTML sanitization for all AI responses (removes scripts and event handlers)
 - Strict Content Security Policy (`script-src 'self'`)
-- API keys stored locally in `config.js` (never sent to third parties)
-- Minimal permissions approach (only what's necessary)
+- API keys stored locally (`config.js`, `bridge/.env` — both gitignored)
+- The bridge listens on localhost only
 - Content extraction happens locally in the browser
-- Secure API key handling (user-provided)
 
 ## License
 

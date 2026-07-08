@@ -8,9 +8,12 @@ import MessageComponent from './components/MessageComponent.js';
 import HistoryComponent from './components/HistoryComponent.js';
 import InputComponent from './components/InputComponent.js';
 import LightboxComponent from './components/LightboxComponent.js';
+import ModelPickerComponent from './components/ModelPickerComponent.js';
 import { getStore, StoreEvents } from './store/store.js';
 import { validateConfig, isAffirmative, isNegative, ErrorTypes } from './utils/validators.js';
-import { withRetry, truncateText } from './utils/helpers.js';
+import { withRetry } from './utils/helpers.js';
+import { getActivePageContent } from './services/PageService.js';
+import { HISTORY_CONTEXT_MESSAGES } from './utils/constants.js';
 
 // PDF.js Worker Configuration
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
@@ -85,6 +88,12 @@ class App {
 
         // Initialize components
         this.components.message = new MessageComponent(chatContainer, this.ttsService);
+        this.components.message.onUserAction = (action, index, content) =>
+            this._handleUserAction(action, index, content);
+        this.components.message.onAIRating = (index, rating) =>
+            this.store.setMessageRating(index, rating);
+        this.components.message.onAIAction = (action, index) =>
+            this._handleAIAction(action, index);
         this.components.history = new HistoryComponent(historyDrawer, historyList);
         this.components.input = new InputComponent(
             inputContainer,
@@ -97,6 +106,13 @@ class App {
             (text, attachment) => this._handleSendMessage(text, attachment)
         );
         this.components.lightbox = new LightboxComponent(lightbox, lightboxImg, lightboxClose);
+
+        // Model picker (button in chat box + popup panel)
+        const modelBtn = document.getElementById('modelBtn');
+        const modelPanel = document.getElementById('modelPanel');
+        if (modelBtn && modelPanel) {
+            this.components.modelPicker = new ModelPickerComponent(modelBtn, modelPanel, CONFIG);
+        }
 
         // Store button references
         this.elements = {
@@ -251,8 +267,12 @@ class App {
         // Add user message to store
         this.store.addMessage('User', text, attachment);
 
-        // Display user message (with attachment if any)
-        this.components.message.appendMessage('User', text, null, attachment);
+        // Display user message (with attachment and actions row)
+        const chat = this.store.getCurrentChat();
+        this.components.message.appendMessage('User', text, null, attachment, null, {
+            timestamp: Date.now(),
+            index: chat ? chat.messages.length - 1 : undefined
+        });
 
         // Set loading state
         this.components.input.setLoadingState(true);
@@ -264,7 +284,7 @@ class App {
             const retryCallback = () => this._sendToAI(text, attachment);
 
             if (err.message?.includes('401') || err.message?.includes('403')) {
-                this._displayError('Authentication failed. Please check your OpenAI API key in config.js.', ErrorTypes.AUTH);
+                this._displayError('Authentication failed. Please check the API key for the selected provider (config.js or bridge/.env).', ErrorTypes.AUTH);
             } else if (err.message?.includes('429')) {
                 this._displayError('Rate limit exceeded. Please wait a moment before trying again.', ErrorTypes.API, retryCallback);
             } else if (err.message?.includes('network') || err.message?.includes('fetch')) {
@@ -290,74 +310,26 @@ class App {
             throw new Error('No active chat found');
         }
 
-        // Get page metadata from active tab
-        const currentWindow = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
-        const [tab] = await chrome.tabs.query({ active: true, windowId: currentWindow.id });
-
-        if (!tab) throw new Error("No active tab found in main window");
-
-        let metadata = { url: tab.url, title: tab.title };
-
-        // Extract page content via script injection
-        try {
-            if (tab.url && tab.url.startsWith('http')) {
-                // Inject Readability.js library first
-                await chrome.scripting.executeScript({
-                    target: { tabId: tab.id },
-                    files: ['Readability.js']
-                });
-
-                // Run extraction logic
-                const result = await chrome.scripting.executeScript({
-                    target: { tabId: tab.id },
-                    func: () => {
-                        try {
-                            const documentClone = document.cloneNode(true);
-                            if (typeof Readability !== 'undefined') {
-                                const reader = new Readability(documentClone);
-                                const article = reader.parse();
-                                if (article && article.textContent) {
-                                    return {
-                                        url: window.location.href,
-                                        title: article.title || document.title,
-                                        domain: window.location.hostname,
-                                        mainContent: article.textContent.replace(/\s+/g, ' ').trim().substring(0, 15000)
-                                    };
-                                }
-                            }
-                            // Fallback to raw innerText
-                            const raw = document.body.innerText.replace(/\s+/g, ' ').trim().substring(0, 15000);
-                            return {
-                                url: window.location.href,
-                                title: document.title,
-                                domain: window.location.hostname,
-                                mainContent: raw || "No readable content found."
-                            };
-                        } catch (e) {
-                            return null;
-                        }
-                    }
-                });
-
-                if (result && result[0] && result[0].result) {
-                    metadata = result[0].result;
-                }
-            }
-        } catch (e) {
-            console.warn('Script injection failed (likely restricted page):', e);
-        }
+        // Get page metadata + readable content from the active tab
+        const metadata = await getActivePageContent();
 
         // Prepare history for context
-        const history = this.store.getMessagesForContext(10);
+        const history = this.store.getMessagesForContext(HISTORY_CONTEXT_MESSAGES);
 
         // Send to background service worker
         const loadingId = 'loading-' + Date.now();
         this.components.message.appendMessage('System', 'Thinking...', loadingId);
 
         try {
+            const selection = this.components.modelPicker
+                ? this.components.modelPicker.getSelection()
+                : { providerId: CONFIG.DEFAULT_PROVIDER, model: CONFIG.DEFAULT_MODEL, effort: CONFIG.DEFAULT_EFFORT };
+
             const response = await chrome.runtime.sendMessage({
                 type: 'ASK_AI',
-                apiKey: null,
+                providerId: selection.providerId,
+                model: selection.model,
+                effort: selection.effort,
                 question: text,
                 metadata: metadata,
                 history: history,
@@ -369,8 +341,14 @@ class App {
             }
 
             const aiResponse = response.answer;
-            this.store.addMessage('AI', aiResponse);
-            this.components.message.appendMessage('AI', aiResponse);
+            const meta = response.meta || null;
+            this.store.addMessage('AI', aiResponse, null, meta);
+
+            const chatAfterAI = this.store.getCurrentChat();
+            this.components.message.appendMessage('AI', aiResponse, null, null, meta, {
+                timestamp: Date.now(),
+                index: chatAfterAI ? chatAfterAI.messages.length - 1 : undefined
+            });
 
             // Check for pending action in AI response
             this._detectPendingAction(aiResponse);
@@ -378,6 +356,48 @@ class App {
             return aiResponse;
         } finally {
             this.components.message.removeMessage(loadingId);
+        }
+    }
+
+    /**
+     * Handles actions on user messages (restart / edit)
+     * @param {string} action - 'restart' or 'edit'
+     * @param {number} index - The message index in the current chat
+     * @param {string} content - The message content
+     * @private
+     */
+    async _handleUserAction(action, index, content) {
+        if (action === 'edit') {
+            // Remove this message and everything after, put text in the input
+            this.store.truncateMessages(index);
+            this.components.input.setValue(content);
+        } else if (action === 'restart') {
+            // Remove this message and everything after, then re-send it
+            this.store.truncateMessages(index);
+            await this._handleSendMessage(content, null);
+        }
+    }
+
+    /**
+     * Handles actions on AI messages ("..." menu)
+     * @param {string} action - The action ('regenerate')
+     * @param {number} index - The AI message index
+     * @private
+     */
+    async _handleAIAction(action, index) {
+        if (action !== 'regenerate' || typeof index !== 'number') return;
+
+        const chat = this.store.getCurrentChat();
+        if (!chat) return;
+
+        // Find the user message that triggered this AI response
+        for (let i = index - 1; i >= 0; i--) {
+            if (chat.messages[i].role === 'User') {
+                const content = chat.messages[i].content;
+                this.store.truncateMessages(i);
+                await this._handleSendMessage(content, null);
+                return;
+            }
         }
     }
 
