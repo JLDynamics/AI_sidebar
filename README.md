@@ -4,12 +4,11 @@ A Chrome extension that puts an AI assistant in your browser's side panel for an
 
 ## Features
 
-- **Multi-provider model picker**: Switch between DeepSeek, OpenRouter, and Claude models per message, right from the chat box — plus a think-effort setting (low/medium/high)
-- **Claude Code bridge**: A small local Python (FastAPI) server that runs Claude Code headless with third-party backends (DeepSeek/OpenRouter), so no claude.ai subscription is consumed
+- **Multi-provider model picker**: Switch between DeepSeek, OpenRouter (e.g. `tencent/hy3:free`), and Claude models per message — plus a think-effort setting (low/medium/high)
+- **Claude Code bridge**: Local Python (FastAPI) server runs Claude Code headless against cheap models (DeepSeek / OpenRouter) instead of official Anthropic models
 - **AI-Powered Q&A**: Ask questions about the current webpage, with multi-modal support
-- **Per-message metadata**: Each answer shows which provider/model responded, estimated cost, and duration
-- **Message actions**: Copy, read aloud (TTS), thumbs up/down, regenerate; edit or restart the conversation from any of your messages
-- **Text-to-Speech (TTS)**: Listen to AI responses via OpenAI TTS with playback controls
+- **Per-message metadata**: Footer shows provider · model · effort · ~cost · duration
+- **Message actions**: Copy, thumbs up/down, regenerate; edit or restart the conversation from any of your messages
 - **File Attachments**: Drag & drop or paste images, PDFs, and text files
 - **PDF Text Extraction**: Automatic text extraction via PDF.js
 - **Content Analysis**: Mozilla's Readability.js extracts clean page content
@@ -48,8 +47,8 @@ Create `config.js` in the root directory (it's gitignored — your keys never ge
 
 ```javascript
 const CONFIG = {
-    // Only used for Text-to-Speech (optional)
-    OPENAI_API_KEY: 'sk-...',
+    // Optional leftover key field (not required for the bridge)
+    OPENAI_API_KEY: 'sk-REPLACE_ME_OR_IGNORE',
     OPENAI_MODEL: 'gpt-4o-mini',
 
     // Python bridge server
@@ -83,9 +82,9 @@ Bridge provider keys (DeepSeek/OpenRouter) go in `bridge/.env`, not here.
 ## How It Works
 
 1. **Content Extraction**: The extension injects Readability.js into the active tab and extracts clean page content (raw-text fallback)
-2. **Routing**: Your question + page content + history is sent to the background service worker, which routes it based on the selected provider — either to the local bridge (which runs `claude -p` with per-provider `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` env) or directly to an OpenAI-compatible API
-3. **Response**: Rendered as markdown, with a footer showing provider · model · ~cost · duration
-4. **TTS**: Click the speaker icon to hear the response (OpenAI TTS)
+2. **Routing**: Your question + page content + history is sent to the background service worker, which routes by provider — either to the local bridge or a direct OpenAI-compatible API
+3. **Bridge**: runs `claude -p` with per-provider env (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`) so Claude Code uses DeepSeek, OpenRouter (Hy3), etc. for inference
+4. **Response**: Rendered as markdown, with a footer showing provider · model · effort · ~cost · duration
 5. **History**: Conversations persist in localStorage
 
 ## Project Structure
@@ -117,7 +116,7 @@ AI_sidebar/
 │   │   ├── PageService.js          # Active-tab content extraction
 │   │   ├── FileService.js          # File processing (images, PDFs, text)
 │   │   ├── StorageService.js       # localStorage wrapper
-│   │   └── TTSService.js           # Text-to-speech
+│   │   └── TTSService.js           # Unused leftover (read-aloud removed)
 │   ├── store/
 │   │   ├── ChatStore.js            # Chat state + events
 │   │   └── store.js                # Singleton export
@@ -146,13 +145,14 @@ After code changes: `chrome://extensions` → reload ⟳ the extension.
 
 **"Missing DEEPSEEK_API_KEY / OPENROUTER_API_KEY"**:
 - Add the key to `bridge/.env` and restart the bridge
+- Prefer keys only in `bridge/.env`. A stale `export DEEPSEEK_API_KEY=...` in `~/.zshrc` used to override the good key; the bridge now loads `.env` with `override=True`
+
+**Empty answer / blank bubble**:
+- Some OpenRouter models stream text but leave Claude Code's final `result` empty — the bridge recovers text from `stream-json` assistant events
+- If it still fails, try another model (e.g. `deepseek-v4-flash`) and check bridge terminal logs
 
 **Provider answers but claims to be a Claude model**:
 - Normal — Claude Code's prompt tells the model a Claude name; check the response footer or your provider dashboard for the truth
-
-**TTS not working**:
-- Requires a valid `OPENAI_API_KEY` in `config.js`
-- Click the sidebar once to resume AudioContext (autoplay policy)
 
 **Content not extracted**:
 - Page may be restricted (chrome://, file://, web store)

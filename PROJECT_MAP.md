@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Chrome extension (Manifest V3) providing an AI sidebar for asking questions about the webpage you're viewing. Supports multiple swappable model providers — DeepSeek, OpenRouter, and Claude (via a local Python bridge to Claude Code), plus any direct OpenAI-compatible API. Features chat history, file/image attachments, TTS, markdown rendering, and a model/think-effort picker.
+A Chrome extension (Manifest V3) providing an AI sidebar for asking questions about the webpage you're viewing. Supports multiple swappable model providers — DeepSeek, OpenRouter (e.g. Hy3), and Claude — via a local Python bridge to **Claude Code** (cheap models for inference), plus any direct OpenAI-compatible API. Features chat history, file/image attachments, markdown rendering, and a model/think-effort picker.
 
 ## Architecture
 
@@ -38,7 +38,7 @@ AI_sidebar/
 ├── js/
 │   ├── app.js                  Entry point: App class, send flow, user/AI actions
 │   ├── components/
-│   │   ├── MessageComponent.js     Message rendering, action rows, markdown, TTS buttons
+│   │   ├── MessageComponent.js     Message rendering, action rows, markdown
 │   │   ├── InputComponent.js       Input, attach menu (+), drag-drop, send visibility
 │   │   ├── ModelPickerComponent.js Provider/model/effort popup panel
 │   │   ├── HistoryComponent.js     Chat history drawer
@@ -47,7 +47,7 @@ AI_sidebar/
 │   │   ├── PageService.js          Active-tab content extraction (Readability + fallback)
 │   │   ├── FileService.js          File → attachment (base64 images, PDF text)
 │   │   ├── StorageService.js       localStorage wrapper, quota handling
-│   │   └── TTSService.js           OpenAI TTS playback + cache
+│   │   └── TTSService.js           Unused leftover (read-aloud removed from UI)
 │   ├── store/
 │   │   ├── ChatStore.js            State + events; truncate/rating for edit/restart/thumbs
 │   │   └── store.js                Singleton re-export
@@ -63,10 +63,10 @@ AI_sidebar/
 
 `CONFIG.PROVIDERS` drives the model picker. Two types:
 
-- `type: 'bridge'` — request goes to the local Python bridge (port 8765), which runs Claude Code headless with per-provider env vars (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`). Providers: `deepseek`, `openrouter`, `claude`. Think-effort maps to `CLAUDE_CODE_EFFORT_LEVEL`.
+- `type: 'bridge'` — request goes to the local Python bridge (port 8765), which runs Claude Code headless with per-provider env vars (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`) so **cheap models do inference**. Providers: `deepseek`, `openrouter` (e.g. `tencent/hy3:free`), `claude`. Think-effort maps to `claude --effort` / `CLAUDE_CODE_EFFORT_LEVEL`.
 - `type: 'openai'` — direct `{baseUrl}/chat/completions` call with `apiKey`. None configured by default — add any OpenAI-compatible endpoint.
 
-Bridge API keys live in `bridge/.env` (gitignored). Direct-provider keys live in `config.js` (gitignored).
+Bridge API keys live in `bridge/.env` (gitignored). Direct-provider keys live in `config.js` (gitignored). The bridge loads `.env` with `override=True` so shell-exported stale keys do not win.
 
 ## Message flow
 
@@ -74,10 +74,16 @@ Bridge API keys live in `bridge/.env` (gitignored). Direct-provider keys live in
 2. `PageService.getActivePageContent()` injects Readability into the active tab
 3. `chrome.runtime.sendMessage({type: 'ASK_AI', ...selection, metadata, history})`
 4. `background.js` routes by provider type, returns `{answer, meta}`
-5. AI message rendered with meta footer (provider · model · ~cost · duration) and action row (copy · TTS · thumbs · regenerate · time ago)
+5. AI message rendered with meta footer (provider · model · effort · ~cost · duration) and action row (copy · thumbs · regenerate · time ago)
+
+## Bridge notes
+
+- Uses `claude -p --output-format stream-json --verbose` and recovers answer text from assistant events when final `result` is empty (needed for some OpenRouter models like Hy3).
+- `--strict-mcp-config --tools ""` avoids hanging on global MCP servers / tools for pure page Q&A.
+- Empty answers surface as HTTP 502 with a clear error instead of a blank chat bubble.
 
 ## Development
 
 - Lint: `npm install` once, then `npm run lint`
-- Bridge: `cd bridge && uvicorn server:app --port 8765` (health check: `/health`)
+- Bridge: `cd bridge && uv run --with-requirements requirements.txt uvicorn server:app --port 8765` (health check: `/health`)
 - Reload extension after changes: chrome://extensions → ⟳
