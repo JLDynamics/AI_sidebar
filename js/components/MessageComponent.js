@@ -35,10 +35,8 @@ window.copyToClipboard = function (btn) {
  * Message Component class
  */
 class MessageComponent {
-    constructor(chatContainer, ttsService) {
+    constructor(chatContainer) {
         this.chatContainer = chatContainer;
-        this.ttsService = ttsService;
-        this.ttsButtons = new Map(); // Track TTS buttons by message content
 
         // Close any open "..." menus on outside click
         document.addEventListener('click', () => {
@@ -175,6 +173,7 @@ class MessageComponent {
             const parts = [];
             if (meta.provider) parts.push(meta.provider);
             if (meta.model) parts.push(meta.model);
+            if (meta.effort) parts.push(`effort:${meta.effort}`);
             if (typeof meta.cost_usd === 'number') parts.push(`~$${meta.cost_usd.toFixed(4)}`);
             if (typeof meta.duration_ms === 'number') parts.push(`${(meta.duration_ms / 1000).toFixed(1)}s`);
 
@@ -268,7 +267,7 @@ class MessageComponent {
 
     /**
      * Adds the action row to AI messages:
-     * copy · speaker · thumbs up · thumbs down · "..." menu · time ago
+     * copy · thumbs up · thumbs down · "..." menu · time ago
      * @param {HTMLElement} messageDiv - The message element
      * @param {string} content - The message content
      * @param {Object} opts - {timestamp, index}
@@ -290,34 +289,6 @@ class MessageComponent {
         `;
         copyMsgBtn.onclick = () => this._copyTextToClipboard(content, copyMsgBtn);
         actionsDiv.appendChild(copyMsgBtn);
-
-        // Speaker (TTS play/pause)
-        const ttsBtn = document.createElement('button');
-        ttsBtn.className = 'action-btn tts-btn tts-main-btn';
-        ttsBtn.title = 'Read aloud';
-        ttsBtn.innerHTML = `
-            <span class="tts-icon">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-                </svg>
-            </span>
-            <span class="tts-spinner">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
-                </svg>
-            </span>
-        `;
-        ttsBtn.onclick = async () => {
-            if (ttsBtn.classList.contains('playing')) {
-                this.ttsService.pause();
-                this._updateTTSButton(ttsBtn, false);
-            } else {
-                await this._playTTS(ttsBtn, content);
-            }
-        };
-        this.ttsButtons.set(content, ttsBtn);
-        actionsDiv.appendChild(ttsBtn);
 
         // Thumbs up / down
         const rating = opts.rating || null;
@@ -395,75 +366,6 @@ class MessageComponent {
         actionsDiv.appendChild(timeSpan);
 
         messageDiv.appendChild(actionsDiv);
-    }
-
-    /**
-     * Plays TTS for a message
-     * @param {HTMLElement} ttsBtn - The TTS button element
-     * @param {string} content - The message content
-     * @private
-     */
-    async _playTTS(ttsBtn, content) {
-        await this.ttsService.prepare();
-
-        // Stop all other TTS buttons
-        this.ttsButtons.forEach((btn) => {
-            if (btn !== ttsBtn && btn.classList.contains('playing')) {
-                this._updateTTSButton(btn, false);
-            }
-        });
-
-        ttsBtn.classList.add('loading');
-
-        try {
-            let offsetToUse = 0;
-            if (this.ttsService.currentText === content && this.ttsService.currentOffset > 0) {
-                offsetToUse = this.ttsService.currentOffset;
-            }
-
-            this.ttsService.currentText = content;
-
-            const audioBuffer = await this.ttsService.generateSpeech(content);
-
-            ttsBtn.classList.remove('loading');
-            ttsBtn.classList.add('playing');
-
-            this._updateTTSButton(ttsBtn, true, true);
-
-            this.ttsService.play(audioBuffer, offsetToUse, () => {
-                this._updateTTSButton(ttsBtn, false);
-            });
-        } catch (e) {
-            console.error(e);
-            ttsBtn.classList.remove('loading');
-            ttsBtn.style.color = '#ef4444';
-            setTimeout(() => ttsBtn.style.color = '', 2000);
-        }
-    }
-
-    /**
-     * Updates the TTS button appearance
-     * @param {HTMLElement} ttsBtn - The TTS button element
-     * @param {boolean} isPlaying - Whether the audio is playing
-     * @param {boolean} showPause - Whether to show pause icon
-     * @private
-     */
-    _updateTTSButton(ttsBtn, isPlaying, showPause = false) {
-        if (isPlaying && showPause) {
-            ttsBtn.querySelector('.tts-icon').innerHTML = `
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                     <rect x="6" y="4" width="4" height="16"></rect>
-                     <rect x="14" y="4" width="4" height="16"></rect>
-                </svg>
-            `;
-        } else {
-            ttsBtn.querySelector('.tts-icon').innerHTML = `
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-                </svg>
-            `;
-        }
     }
 
     /**

@@ -27,8 +27,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Load API keys from the .env file sitting next to this script
-load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+# Load API keys from the .env file sitting next to this script.
+# override=True so bridge/.env wins over a stale DEEPSEEK_API_KEY (etc.)
+# already present in the shell — otherwise Claude Code gets 401s and retries
+# for minutes until our 180s timeout looks like a "hang".
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 app = FastAPI(title="AI Sidebar Bridge")
 
@@ -159,7 +162,65 @@ def build_prompt(req: ChatRequest) -> str:
 # Claude Code invocation
 # ---------------------------------------------------------------------------
 
-def run_claude_code(prompt: str, env_overrides: dict, model: str | None) -> dict:
+def _text_from_assistant_event(event: dict) -> str:
+    """Pull plain text out of a stream-json assistant event."""
+    message = event.get("message") or {}
+    parts = []
+    for block in message.get("content") or []:
+        if isinstance(block, dict) and block.get("type") == "text":
+            t = block.get("text")
+            if t:
+                parts.append(t)
+    return "".join(parts)
+
+
+def parse_claude_stream(stdout: str) -> dict:
+    """
+    Parse Claude Code --output-format stream-json.
+
+    Some cheap models (e.g. OpenRouter Hy3) stream real answer text in
+    assistant events, but leave the final result.result field empty.
+    Prefer result.result when present; otherwise recover text from assistant events.
+    """
+    final = None
+    texts: list[str] = []
+
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        etype = event.get("type")
+        if etype == "assistant":
+            chunk = _text_from_assistant_event(event)
+            if chunk:
+                texts.append(chunk)
+        elif etype == "result":
+            final = event
+
+    if final is None:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not parse Claude Code stream output: {stdout[:500]}",
+        )
+
+    answer = (final.get("result") or "").strip()
+    if not answer and texts:
+        answer = "".join(texts).strip()
+        final = {**final, "result": answer}
+
+    return final
+
+
+def run_claude_code(
+    prompt: str,
+    env_overrides: dict,
+    model: str | None,
+    effort: str | None = None,
+) -> dict:
     claude_bin = shutil.which("claude")
     if not claude_bin:
         raise HTTPException(
@@ -168,11 +229,34 @@ def run_claude_code(prompt: str, env_overrides: dict, model: str | None) -> dict
                    "'claude' is on your PATH.",
         )
 
-    cmd = [claude_bin, "-p", prompt, "--output-format", "json"]
+    # Claude Code runs headless; provider env + --model pick the cheap inference model
+    # (DeepSeek, OpenRouter Hy3, etc.) instead of official Claude.
+    # stream-json: needed to recover answers when result.result is empty (Hy3).
+    # --strict-mcp-config: ignore global MCP servers (chrome-devtools, etc.).
+    # --tools "": pure Q&A for the sidebar (page text is already in the prompt).
+    cmd = [
+        claude_bin,
+        "-p",
+        prompt,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--strict-mcp-config",
+        "--tools",
+        "",
+    ]
     if model:
         cmd += ["--model", model]
+    if effort in ("low", "medium", "high", "xhigh", "max"):
+        cmd += ["--effort", effort]
 
     env = {**os.environ, **env_overrides}
+    # Blank override values mean "unset" — a present-but-empty key can confuse auth.
+    for key, value in env_overrides.items():
+        if value == "":
+            env.pop(key, None)
+    if effort in ("low", "medium", "high", "xhigh", "max"):
+        env["CLAUDE_CODE_EFFORT_LEVEL"] = effort
 
     try:
         result = subprocess.run(
@@ -181,6 +265,7 @@ def run_claude_code(prompt: str, env_overrides: dict, model: str | None) -> dict
             text=True,
             encoding="utf-8",
             env=env,
+            stdin=subprocess.DEVNULL,
             timeout=180,
         )
     except subprocess.TimeoutExpired:
@@ -190,13 +275,7 @@ def run_claude_code(prompt: str, env_overrides: dict, model: str | None) -> dict
         detail = (result.stderr or result.stdout or "unknown error").strip()[-2000:]
         raise HTTPException(status_code=502, detail=f"Claude Code failed: {detail}")
 
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not parse Claude Code output: {result.stdout[:500]}",
-        )
+    return parse_claude_stream(result.stdout or "")
 
 
 # ---------------------------------------------------------------------------
@@ -246,21 +325,32 @@ def chat(req: ChatRequest):
 
     prompt = build_prompt(req)
     model = req.model or provider["default_model"]
+    effort = req.effort if req.effort in ("low", "medium", "high") else None
 
     env_overrides = dict(provider["env"])
-    if req.effort in ("low", "medium", "high"):
-        # Controls how much reasoning Claude Code asks the model for
-        env_overrides["CLAUDE_CODE_EFFORT_LEVEL"] = req.effort
-
-    output = run_claude_code(prompt, env_overrides, model)
+    output = run_claude_code(prompt, env_overrides, model, effort=effort)
 
     if output.get("is_error"):
         raise HTTPException(status_code=502, detail=str(output.get("result", "error")))
 
+    answer = (output.get("result") or "").strip()
+    # Claude Code sometimes finishes OK but leaves result empty (seen with some
+    # OpenRouter models). Report it clearly instead of a blank sidebar bubble.
+    if not answer:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Claude Code returned an empty answer for model "
+                f"'{model or 'provider default'}'. Try again, or pick another "
+                f"cheap model (e.g. deepseek-v4-flash)."
+            ),
+        )
+
     return {
-        "answer": output.get("result", ""),
+        "answer": answer,
         "provider": req.provider,
         "model": model or "provider default",
+        "effort": effort,
         "cost_usd": output.get("total_cost_usd"),
         "duration_ms": output.get("duration_ms"),
     }

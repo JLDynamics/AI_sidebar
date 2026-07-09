@@ -33,6 +33,7 @@ async function handleAskAI(request) {
             meta: {
                 provider: data.provider,
                 model: data.model,
+                effort: data.effort || request.effort || null,
                 cost_usd: data.cost_usd,
                 duration_ms: data.duration_ms
             }

@@ -3,7 +3,6 @@
  * Initializes the store, components, and wires everything together
  */
 
-import TTSService from './services/TTSService.js';
 import MessageComponent from './components/MessageComponent.js';
 import HistoryComponent from './components/HistoryComponent.js';
 import InputComponent from './components/InputComponent.js';
@@ -24,7 +23,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
 class App {
     constructor() {
         this.store = null;
-        this.ttsService = null;
         this.components = {};
         this.initialized = false;
     }
@@ -41,9 +39,6 @@ class App {
 
             // Initialize store
             this.store = getStore();
-
-            // Initialize TTS service
-            this.ttsService = new TTSService(CONFIG.OPENAI_API_KEY);
 
             // Initialize components
             this._initComponents();
@@ -87,7 +82,7 @@ class App {
         const newChatBtn = document.getElementById('newChatBtn');
 
         // Initialize components
-        this.components.message = new MessageComponent(chatContainer, this.ttsService);
+        this.components.message = new MessageComponent(chatContainer);
         this.components.message.onUserAction = (action, index, content) =>
             this._handleUserAction(action, index, content);
         this.components.message.onAIRating = (index, rating) =>
