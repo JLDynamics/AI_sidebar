@@ -47,7 +47,6 @@ dropdown, and ask a question about any page.
 - Providers: `deepseek` (model names auto-mapped), `openrouter` (set any
   model slug from their catalog via `OPENROUTER_MODEL` or per-request),
   `claude` (your normal Claude Code account, no override).
-- Image attachments aren't supported through the bridge yet — use a direct
-  API provider in the sidebar dropdown for images.
+- Attachments: PDF and text/code files are supported (images are not).
 - The bridge only listens on localhost; your keys never leave your machine
   except to the provider you chose.

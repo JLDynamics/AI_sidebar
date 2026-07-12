@@ -6,10 +6,9 @@
 import MessageComponent from './components/MessageComponent.js';
 import HistoryComponent from './components/HistoryComponent.js';
 import InputComponent from './components/InputComponent.js';
-import LightboxComponent from './components/LightboxComponent.js';
 import ModelPickerComponent from './components/ModelPickerComponent.js';
 import { getStore, StoreEvents } from './store/store.js';
-import { validateConfig, isAffirmative, isNegative, ErrorTypes } from './utils/validators.js';
+import { validateConfig, ErrorTypes } from './utils/validators.js';
 import { withRetry } from './utils/helpers.js';
 import { getActivePageContent } from './services/PageService.js';
 import { HISTORY_CONTEXT_MESSAGES } from './utils/constants.js';
@@ -73,13 +72,11 @@ class App {
         const uploadBtn = document.getElementById('uploadBtn');
         const previewContainer = document.getElementById('imagePreviewContainer');
         const dragDropOverlay = document.getElementById('dragDropOverlay');
-        const lightbox = document.getElementById('lightbox');
-        const lightboxImg = document.getElementById('lightboxImg');
-        const lightboxClose = document.querySelector('.lightbox-close');
         const historyOverlay = document.getElementById('historyOverlay');
         const toggleHistoryBtn = document.getElementById('toggleHistoryBtn');
         const historyCloseBtn = document.getElementById('historyCloseBtn');
         const newChatBtn = document.getElementById('newChatBtn');
+        const factCheckBtn = document.getElementById('factCheckBtn');
 
         // Initialize components
         this.components.message = new MessageComponent(chatContainer);
@@ -100,7 +97,6 @@ class App {
             dragDropOverlay,
             (text, attachment) => this._handleSendMessage(text, attachment)
         );
-        this.components.lightbox = new LightboxComponent(lightbox, lightboxImg, lightboxClose);
 
         // Model picker (button in chat box + popup panel)
         const modelBtn = document.getElementById('modelBtn');
@@ -114,16 +110,10 @@ class App {
             toggleHistoryBtn,
             historyCloseBtn,
             newChatBtn,
+            factCheckBtn,
             historyOverlay,
             chatContainer
         };
-
-        // Setup image click handlers for lightbox
-        chatContainer.addEventListener('click', (e) => {
-            if (e.target.classList.contains('sent-image')) {
-                this.components.lightbox.open(e.target.src);
-            }
-        });
 
         // Initial render
         this.components.message.renderMessages();
@@ -158,6 +148,13 @@ class App {
             }
         });
 
+        // Fact-check button
+        if (this.elements.factCheckBtn) {
+            this.elements.factCheckBtn.addEventListener('click', () => {
+                this._handleFactCheck();
+            });
+        }
+
         // Subscribe to store events
         this.store.subscribe(StoreEvents.CURRENT_CHAT_CHANGED, () => {
             this.components.message.renderMessages();
@@ -170,6 +167,13 @@ class App {
 
         this.store.subscribe(StoreEvents.MESSAGE_ADDED, () => {
             this.components.history.render();
+        });
+
+        // When a session is deleted, drop its remembered pages on the bridge.
+        this.store.subscribe(StoreEvents.SESSION_DELETED, (_state, chatId) => {
+            if (!chatId) return;
+            chrome.runtime.sendMessage({ type: 'FORGET_SESSION', sessionId: chatId })
+                .catch(() => { /* bridge may be down; age-based prune covers it */ });
         });
     }
 
@@ -223,10 +227,6 @@ class App {
 
             // Esc: Close overlays
             if (e.key === 'Escape') {
-                if (this.components.lightbox.isOpen()) {
-                    this.components.lightbox.close();
-                    return;
-                }
                 if (this.store.getState().isHistoryOpen) {
                     this.store.toggleHistory();
                     return;
@@ -242,23 +242,6 @@ class App {
      * @private
      */
     async _handleSendMessage(text, attachment) {
-        // Check for pending action interception
-        const pendingAction = this.store.getPendingAction();
-        if (pendingAction) {
-            if (isAffirmative(text)) {
-                this.store.setPendingAction(null);
-                await this._executePendingAction(pendingAction);
-                return;
-            } else if (isNegative(text)) {
-                this.store.setPendingAction(null);
-                this.store.addMessage('User', text);
-                setTimeout(() => {
-                    this.store.addMessage('AI', "Okay, I won't do that.");
-                }, 500);
-                return;
-            }
-        }
-
         // Add user message to store
         this.store.addMessage('User', text, attachment);
 
@@ -293,13 +276,51 @@ class App {
     }
 
     /**
+     * Fact-checks the current page, or the claim typed in the input, with
+     * cited sources. Runs through the agent's web-search tools (bridge).
+     * @private
+     */
+    async _handleFactCheck() {
+        const claim = this.components.input.getValue().trim();
+        const label = claim ? `Fact-check: ${claim}` : 'Fact-check this page';
+
+        // Show the request as a user message
+        this.store.addMessage('User', label);
+        const chat = this.store.getCurrentChat();
+        this.components.message.appendMessage('User', label, null, null, null, {
+            timestamp: Date.now(),
+            index: chat ? chat.messages.length - 1 : undefined
+        });
+        if (claim) this.components.input.clear();
+
+        this.components.input.setLoadingState(true);
+        try {
+            await withRetry(() => this._sendToAI(claim, null, 'factcheck'), 2, 1000);
+        } catch (err) {
+            const retry = () => this._sendToAI(claim, null, 'factcheck');
+            if (err.message?.includes('401') || err.message?.includes('403')) {
+                this._displayError('Authentication failed. Check the API key (config.js or bridge/.env).', ErrorTypes.AUTH);
+            } else if (err.message?.includes('429')) {
+                this._displayError('Rate limit exceeded. Please wait a moment before trying again.', ErrorTypes.API, retry);
+            } else if (err.message?.includes('network') || err.message?.includes('fetch')) {
+                this._displayError('Network error. Fact-checking needs the bridge server running.', ErrorTypes.NETWORK, retry);
+            } else {
+                this._displayError(err.message || 'Fact-check failed.', ErrorTypes.API, retry);
+            }
+        } finally {
+            this.components.input.setLoadingState(false);
+        }
+    }
+
+    /**
      * Sends a message to the AI via the background service worker
      * @param {string} text - The message text
      * @param {Object} attachment - Optional attachment
+     * @param {string} mode - Optional mode ('factcheck')
      * @returns {Promise<string>} - The AI response
      * @private
      */
-    async _sendToAI(text, attachment) {
+    async _sendToAI(text, attachment, mode = null) {
         const currentChat = this.store.getCurrentChat();
         if (!currentChat) {
             throw new Error('No active chat found');
@@ -307,6 +328,13 @@ class App {
 
         // Get page metadata + readable content from the active tab
         const metadata = await getActivePageContent();
+
+        // Record this page in the session's memory, then gather the OTHER pages
+        // viewed this session. They're sent to the bridge, which writes them to
+        // files the agent greps on demand (accurate + token-efficient).
+        this.store.upsertPage(metadata);
+        const sessionPages = this.store.getSessionPages(metadata.url)
+            .map(p => ({ url: p.url, title: p.title, markdown: p.markdown }));
 
         // Prepare history for context
         const history = this.store.getMessagesForContext(HISTORY_CONTEXT_MESSAGES);
@@ -328,7 +356,10 @@ class App {
                 question: text,
                 metadata: metadata,
                 history: history,
-                attachment: attachment
+                attachment: attachment,
+                mode: mode,
+                sessionId: currentChat.id,
+                sessionPages: sessionPages
             });
 
             if (response.error) {
@@ -344,9 +375,6 @@ class App {
                 timestamp: Date.now(),
                 index: chatAfterAI ? chatAfterAI.messages.length - 1 : undefined
             });
-
-            // Check for pending action in AI response
-            this._detectPendingAction(aiResponse);
 
             return aiResponse;
         } finally {
@@ -393,57 +421,6 @@ class App {
                 await this._handleSendMessage(content, null);
                 return;
             }
-        }
-    }
-
-    /**
-     * Detects pending action from AI response
-     * @param {string} aiText - The AI response text
-     * @private
-     */
-    _detectPendingAction(aiText) {
-        const searchRegex = /(?:would you like me to|should i|do you want me to|i can|i can certainly) (?:search|check|look up|find) (?:for )?(.+?)(\?|$|\.|,| with a quick search| if you'd like)/i;
-        const match = aiText.match(searchRegex);
-
-        if (match && match[1]) {
-            let query = match[1].trim();
-            query = query.replace(/ for you$/i, '')
-                .replace(/ with a quick search$/i, '')
-                .replace(/ if you'd like$/i, '')
-                .replace(/ that information$/i, '');
-
-            this.store.setPendingAction({
-                type: 'search_web',
-                params: { query: query }
-            });
-        } else {
-            this.store.setPendingAction(null);
-        }
-    }
-
-    /**
-     * Executes a pending action
-     * @param {Object} action - The action to execute
-     * @private
-     */
-    async _executePendingAction(action) {
-        if (action.type === 'search_web') {
-            let query = action.params.query;
-
-            // Handle vague queries
-            const vagueTerms = ['that information', 'that', 'it', 'the info', 'this'];
-            if (vagueTerms.includes(query.toLowerCase()) || query.length < 3) {
-                const currentChat = this.store.getCurrentChat();
-                if (currentChat && currentChat.messages.length > 0) {
-                    const lastUserMsg = [...currentChat.messages].reverse().find(m => m.role === 'User');
-                    if (lastUserMsg) {
-                        query = lastUserMsg.content;
-                    }
-                }
-            }
-
-            this.components.message.appendMessage('User', `Yes, search for "${query}"`);
-            await this._sendToAI(`Search for ${query}`, null);
         }
     }
 

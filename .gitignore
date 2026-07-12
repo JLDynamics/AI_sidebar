@@ -8,6 +8,7 @@ venv/
 __pycache__/
 *.pyc
 .env
+bridge/workspace/
 .DS_Store
 CLAUDE.md
 *.backup

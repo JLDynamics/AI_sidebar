@@ -15,12 +15,6 @@
 
 <body>
     <div class="app-container">
-        <!-- Lightbox for Image Zoom -->
-        <div id="lightbox" class="lightbox">
-            <span class="lightbox-close">&times;</span>
-            <img class="lightbox-content" id="lightboxImg">
-        </div>
-
         <!-- History Drawer -->
         <div class="history-drawer" id="historyDrawer">
             <div class="history-header">
@@ -79,14 +73,14 @@
 
                     <div class="input-row">
                         <input type="file" id="fileInput"
-                            accept="image/jpeg, image/png, image/webp, image/gif, .txt, .md, .js, .py, .html, .css, .json, .pdf"
+                            accept=".txt, .md, .js, .py, .html, .css, .json, .pdf"
                             style="display: none;">
                         <textarea id="chatInput" placeholder="Ask anything... (Type, Paste, or Drop)"
                             rows="1"></textarea>
                     </div>
 
                     <div class="input-controls">
-                        <button id="uploadBtn" class="upload-btn plus-btn" title="Add file or photo">
+                        <button id="uploadBtn" class="upload-btn plus-btn" title="Attach a file (PDF, text, or code)">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round">
                                 <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -94,10 +88,15 @@
                             </svg>
                         </button>
 
-                        <div id="attachMenu" class="attach-menu">
-                            <button id="attachPhotoBtn" class="attach-option">🖼️ Add photo</button>
-                            <button id="attachFileBtn" class="attach-option">📄 Add file</button>
-                        </div>
+                        <button id="factCheckBtn" class="factcheck-btn"
+                            title="Fact-check this page — or the claim you've typed — with cited sources">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                                <polyline points="9 12 11 14 15 9"></polyline>
+                            </svg>
+                            <span class="factcheck-label">Fact-check</span>
+                        </button>
 
                         <span class="controls-spacer"></span>
 

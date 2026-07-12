@@ -89,11 +89,11 @@ class MessageComponent {
      * @param {string} role - The role (User, AI, System)
      * @param {string} content - The message content
      * @param {string} id - Optional element ID
-     * @param {Object} attachment - Optional attachment object
+     * @param {Object} _attachment - Unused (kept for call-site compatibility)
      * @param {Object} meta - Optional metadata (provider, model, cost) shown as a footer
      * @param {Object} opts - Optional {timestamp, index} for user message actions
      */
-    appendMessage(role, content, id = null, attachment = null, meta = null, opts = {}) {
+    appendMessage(role, content, id = null, _attachment = null, meta = null, opts = {}) {
         // Remove welcome message if present
         const welcome = this.chatContainer.querySelector('.welcome-message');
         if (welcome) welcome.remove();
@@ -104,15 +104,6 @@ class MessageComponent {
 
         const bubble = document.createElement('div');
         bubble.className = 'message-bubble';
-
-        // Display Attachment if present (User only usually)
-        if (attachment && attachment.type === 'image') {
-            const img = document.createElement('img');
-            img.src = attachment.content;
-            img.className = 'sent-image';
-            img.alt = attachment.name;
-            bubble.appendChild(img);
-        }
 
         // Display Text Content
         if (content) {
@@ -129,6 +120,18 @@ class MessageComponent {
                 // Code Block Injection for Copy Button
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = parsedContent;
+
+                // Make links (e.g. fact-check citations) open in a new tab
+                // instead of navigating the side panel. Strip non-http links.
+                tempDiv.querySelectorAll('a').forEach(a => {
+                    const href = a.getAttribute('href') || '';
+                    if (/^https?:\/\//i.test(href)) {
+                        a.setAttribute('target', '_blank');
+                        a.setAttribute('rel', 'noopener noreferrer');
+                    } else {
+                        a.removeAttribute('href');
+                    }
+                });
 
                 const preTags = tempDiv.querySelectorAll('pre');
                 preTags.forEach(pre => {
@@ -174,6 +177,7 @@ class MessageComponent {
             if (meta.provider) parts.push(meta.provider);
             if (meta.model) parts.push(meta.model);
             if (meta.effort) parts.push(`effort:${meta.effort}`);
+            if (typeof meta.num_turns === 'number' && meta.num_turns > 1) parts.push(`${meta.num_turns} turns`);
             if (typeof meta.cost_usd === 'number') parts.push(`~$${meta.cost_usd.toFixed(4)}`);
             if (typeof meta.duration_ms === 'number') parts.push(`${(meta.duration_ms / 1000).toFixed(1)}s`);
 

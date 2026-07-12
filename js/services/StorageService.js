@@ -1,14 +1,30 @@
 /**
  * Storage Service
- * Wraps localStorage operations with error handling and serialization
+ * Wraps localStorage with error handling and serialization.
+ *
+ * Storage layout (per-session keys, NOT one big blob):
+ *   ai_sidebar_chat_index         -> [{ id, title, lastUpdated }, ...]  (lightweight list, newest first)
+ *   ai_sidebar_chat_<id>_msgs     -> [ ...messages ]   (small, changes on every message)
+ *   ai_sidebar_chat_<id>_pages    -> [ ...pages ]       (heavy, changes only when a new page is visited)
+ *
+ * Why split? Saving one message only rewrites that one session's small
+ * messages key instead of re-serializing every chat's messages AND pages.
+ * The heavy page content is left untouched unless it actually changed.
  */
 
 const STORAGE_KEYS = {
-    CHATS: 'gemini_chats',
-    SETTINGS: 'sidebar_settings'
+    SETTINGS: 'sidebar_settings',
+    CHAT_INDEX: 'ai_sidebar_chat_index',
+    // Old single-blob key from previous versions. Migrated to per-session keys
+    // the first time getChats() runs, then removed.
+    LEGACY_CHATS: 'ai_sidebar_chats'
 };
 
-const MAX_STORAGE_SIZE = 5 * 1024 * 1024; // 5MB limit
+const CHAT_PREFIX = 'ai_sidebar_chat_';
+const msgsKey = (id) => `${CHAT_PREFIX}${id}_msgs`;
+const pagesKey = (id) => `${CHAT_PREFIX}${id}_pages`;
+
+const MAX_STORAGE_SIZE = 5 * 1024 * 1024; // 5MB limit (browser cap is ~5-10MB)
 
 /**
  * Checks if localStorage is available
@@ -42,110 +58,257 @@ class StorageService {
         this.available = isStorageAvailable();
         if (!this.available) {
             console.warn('localStorage is not available. Chat history will not persist.');
+            return;
         }
+        this._cleanupLegacyData();
     }
 
     /**
-     * Gets an item from localStorage
-     * @param {string} key - The storage key
-     * @returns {*} - The parsed value or null
+     * Removes obsolete storage keys from previous versions.
+     * @private
      */
-    getItem(key) {
-        if (!this.available) return null;
+    _cleanupLegacyData() {
+        try {
+            if (localStorage.getItem('gemini_chats')) {
+                localStorage.removeItem('gemini_chats');
+                console.log('Removed obsolete legacy chat data.');
+            }
+        } catch (e) {
+            console.error('Failed to clean up legacy data:', e);
+        }
+    }
 
+    // --- Low-level helpers --------------------------------------------------
+
+    /**
+     * Reads and parses a JSON value for a key.
+     * @param {string} key
+     * @returns {*} parsed value or null
+     * @private
+     */
+    _read(key) {
         try {
             const value = localStorage.getItem(key);
             return value ? JSON.parse(value) : null;
         } catch (e) {
-            console.error(`Failed to get item "${key}" from localStorage:`, e);
+            console.error(`Failed to read "${key}" from localStorage:`, e);
             return null;
         }
     }
 
     /**
-     * Sets an item in localStorage
-     * @param {string} key - The storage key
-     * @param {*} value - The value to store
-     * @returns {boolean} - True if successful
+     * Writes a raw string for a key, with a size guard and quota handling.
+     * On QuotaExceededError it evicts the oldest session(s) and retries.
+     * @param {string} key
+     * @param {string} serialized
+     * @returns {boolean} true if written
+     * @private
      */
-    setItem(key, value) {
+    _write(key, serialized) {
         if (!this.available) return false;
 
+        const size = getStringSize(serialized);
+        if (size > MAX_STORAGE_SIZE) {
+            console.error(`Refusing to store "${key}": ${size} bytes exceeds ${MAX_STORAGE_SIZE}.`);
+            return false;
+        }
+
         try {
-            const serialized = JSON.stringify(value);
-            const size = getStringSize(serialized);
-
-            if (size > MAX_STORAGE_SIZE) {
-                throw new Error(`Storage quota exceeded. Item size: ${size} bytes`);
-            }
-
             localStorage.setItem(key, serialized);
             return true;
         } catch (e) {
-            console.error(`Failed to set item "${key}" in localStorage:`, e);
-
-            // Handle quota exceeded error
-            if (e.name === 'QuotaExceededError' || e.code === 22) {
-                this._cleanupOldEntries();
-                try {
-                    localStorage.setItem(key, JSON.stringify(value));
-                    return true;
-                } catch (retryError) {
-                    console.error('Retry failed after cleanup:', retryError);
+            if (e && (e.name === 'QuotaExceededError' || e.code === 22)) {
+                // Free space by dropping the oldest sessions, then retry.
+                while (this._evictOldest()) {
+                    try {
+                        localStorage.setItem(key, serialized);
+                        return true;
+                    } catch (retryError) {
+                        if (!(retryError && (retryError.name === 'QuotaExceededError' || retryError.code === 22))) {
+                            console.error(`Failed to write "${key}" after eviction:`, retryError);
+                            return false;
+                        }
+                        // still full -> loop and evict another
+                    }
                 }
+                console.error(`Storage full and nothing left to evict; could not write "${key}".`);
+                return false;
             }
+            console.error(`Failed to write "${key}" to localStorage:`, e);
             return false;
         }
     }
 
     /**
-     * Removes an item from localStorage
-     * @param {string} key - The storage key
+     * Removes a key.
+     * @param {string} key
+     * @private
      */
-    removeItem(key) {
+    _remove(key) {
         if (!this.available) return;
         try {
             localStorage.removeItem(key);
         } catch (e) {
-            console.error(`Failed to remove item "${key}" from localStorage:`, e);
+            console.error(`Failed to remove "${key}" from localStorage:`, e);
         }
     }
 
     /**
-     * Clears all items from localStorage
+     * Evicts the single oldest session (by lastUpdated) to free space.
+     * Never removes the last remaining session.
+     * @returns {boolean} true if a session was evicted
+     * @private
      */
-    clear() {
-        if (!this.available) return;
+    _evictOldest() {
+        const index = this._read(STORAGE_KEYS.CHAT_INDEX) || [];
+        if (index.length <= 1) return false;
+
+        let oldest = index[0];
+        for (const entry of index) {
+            if ((entry.lastUpdated || 0) < (oldest.lastUpdated || 0)) oldest = entry;
+        }
+
+        this._remove(msgsKey(oldest.id));
+        this._remove(pagesKey(oldest.id));
+
+        const trimmed = index.filter(e => e.id !== oldest.id);
         try {
-            localStorage.clear();
+            localStorage.setItem(STORAGE_KEYS.CHAT_INDEX, JSON.stringify(trimmed));
         } catch (e) {
-            console.error('Failed to clear localStorage:', e);
+            console.error('Failed to update index during eviction:', e);
+        }
+        console.warn(`Storage quota exceeded. Evicted oldest session: "${oldest.title || oldest.id}".`);
+        return true;
+    }
+
+    // --- Migration ----------------------------------------------------------
+
+    /**
+     * Migrates old single-blob chat data ("ai_sidebar_chats") into the new
+     * per-session keys. Runs once; no-op afterwards.
+     * @private
+     */
+    _migrateLegacyChats() {
+        if (!this.available) return;
+        const hasIndex = localStorage.getItem(STORAGE_KEYS.CHAT_INDEX) !== null;
+        const legacy = localStorage.getItem(STORAGE_KEYS.LEGACY_CHATS);
+        if (hasIndex || !legacy) return;
+
+        try {
+            const chats = JSON.parse(legacy) || [];
+            this.saveChats(chats);
+            localStorage.removeItem(STORAGE_KEYS.LEGACY_CHATS);
+            console.log(`Migrated ${chats.length} chat(s) to per-session storage.`);
+        } catch (e) {
+            console.error('Failed to migrate legacy chats:', e);
         }
     }
 
+    // --- Chat persistence (public API used by ChatStore) --------------------
+
     /**
-     * Gets all chat history
-     * @returns {Array} - Array of chat objects
+     * Loads all chats, reconstructing full chat objects from the index and the
+     * per-session message/page keys. Runs a one-time migration if needed.
+     * @returns {Array} - Array of chat objects { id, title, lastUpdated, messages, pages }
      */
     getChats() {
-        return this.getItem(STORAGE_KEYS.CHATS) || [];
+        if (!this.available) return [];
+        this._migrateLegacyChats();
+
+        const index = this._read(STORAGE_KEYS.CHAT_INDEX) || [];
+        return index.map(meta => ({
+            id: meta.id,
+            title: meta.title || 'New Chat',
+            lastUpdated: meta.lastUpdated || 0,
+            messages: this._read(msgsKey(meta.id)) || [],
+            pages: this._read(pagesKey(meta.id)) || []
+        }));
     }
 
     /**
-     * Saves chat history
-     * @param {Array} chats - Array of chat objects
-     * @returns {boolean} - True if successful
+     * Saves the lightweight index (id, title, lastUpdated, order). Cheap.
+     * @param {Array} chats - The full chats array (order preserved)
+     * @returns {boolean}
+     */
+    saveIndex(chats) {
+        const index = (chats || []).map(c => ({
+            id: c.id,
+            title: c.title,
+            lastUpdated: c.lastUpdated || 0
+        }));
+        return this._write(STORAGE_KEYS.CHAT_INDEX, JSON.stringify(index));
+    }
+
+    /**
+     * Saves ONE chat's messages (leaves its pages untouched).
+     * @param {Object} chat
+     * @returns {boolean}
+     */
+    saveChatMessages(chat) {
+        if (!chat || !chat.id) return false;
+        return this._write(msgsKey(chat.id), JSON.stringify(chat.messages || []));
+    }
+
+    /**
+     * Saves ONE chat's pages (leaves its messages untouched).
+     * @param {Object} chat
+     * @returns {boolean}
+     */
+    saveChatPages(chat) {
+        if (!chat || !chat.id) return false;
+        return this._write(pagesKey(chat.id), JSON.stringify(chat.pages || []));
+    }
+
+    /**
+     * Saves every chat (index + each session's messages and pages).
+     * Used for migration and bulk saves; individual changes should use the
+     * granular methods above so they don't rewrite everything.
+     * @param {Array} chats
+     * @returns {boolean}
      */
     saveChats(chats) {
-        return this.setItem(STORAGE_KEYS.CHATS, chats);
+        let ok = this.saveIndex(chats);
+        (chats || []).forEach(c => {
+            ok = this.saveChatMessages(c) && ok;
+            ok = this.saveChatPages(c) && ok;
+        });
+        return ok;
     }
+
+    /**
+     * Removes one session's messages and pages keys. The caller is responsible
+     * for updating the index (e.g. via saveIndex).
+     * @param {string} chatId
+     */
+    removeChat(chatId) {
+        if (!chatId) return;
+        this._remove(msgsKey(chatId));
+        this._remove(pagesKey(chatId));
+    }
+
+    /**
+     * Removes ALL chat data (every session's keys and the index).
+     * Settings are left intact.
+     */
+    clearAllChats() {
+        if (!this.available) return;
+        try {
+            Object.keys(localStorage)
+                .filter(k => k === STORAGE_KEYS.CHAT_INDEX || k.startsWith(CHAT_PREFIX))
+                .forEach(k => this._remove(k));
+        } catch (e) {
+            console.error('Failed to clear chat data:', e);
+        }
+    }
+
+    // --- Settings -----------------------------------------------------------
 
     /**
      * Gets settings
      * @returns {Object} - Settings object
      */
     getSettings() {
-        return this.getItem(STORAGE_KEYS.SETTINGS) || {};
+        return this._read(STORAGE_KEYS.SETTINGS) || {};
     }
 
     /**
@@ -154,12 +317,22 @@ class StorageService {
      * @returns {boolean} - True if successful
      */
     saveSettings(settings) {
-        return this.setItem(STORAGE_KEYS.SETTINGS, settings);
+        return this._write(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    }
+
+    // --- Misc ---------------------------------------------------------------
+
+    /**
+     * Removes any key from localStorage (generic helper).
+     * @param {string} key
+     */
+    removeItem(key) {
+        this._remove(key);
     }
 
     /**
-     * Gets the approximate storage usage
-     * @returns {Object} - Object with used and total bytes
+     * Gets the approximate storage usage across all keys.
+     * @returns {Object} - { used, total } in bytes
      */
     getStorageInfo() {
         if (!this.available) return { used: 0, total: MAX_STORAGE_SIZE };
@@ -171,20 +344,6 @@ class StorageService {
             }
         }
         return { used, total: MAX_STORAGE_SIZE };
-    }
-
-    /**
-     * Internal method to clean up old entries when quota is exceeded
-     * @private
-     */
-    _cleanupOldEntries() {
-        const chats = this.getChats();
-        if (chats.length > 1) {
-            // Keep only the most recent chat
-            const recentChats = chats.slice(0, 1);
-            this.setItem(STORAGE_KEYS.CHATS, recentChats);
-            console.warn('Storage quota exceeded. Old chat history was cleared.');
-        }
     }
 }
 

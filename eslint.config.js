@@ -9,6 +9,7 @@ module.exports = [
             'pdf.min.js',
             'pdf.worker.min.js',
             'Readability.js',
+            'defuddle.js',
             'bridge/**'
         ]
     },
@@ -25,7 +26,8 @@ module.exports = [
                 CONFIG: 'readonly',
                 marked: 'readonly',
                 pdfjsLib: 'readonly',
-                Readability: 'readonly'
+                Readability: 'readonly',
+                Defuddle: 'readonly'
             }
         },
         rules: {

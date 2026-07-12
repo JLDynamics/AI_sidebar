@@ -1,17 +1,19 @@
 # AI Sidebar Assistant
 
-A Chrome extension that puts an AI assistant in your browser's side panel for analyzing webpage content and answering questions — with **swappable model providers**: cheap models (e.g. DeepSeek) for everyday browsing, routed through a local **Claude Code bridge** — or any OpenAI-compatible API directly.
+A Chrome extension that puts an AI assistant in your browser's side panel for analyzing webpage content and answering questions — with **swappable model providers**: cheap models (e.g. DeepSeek) for everyday browsing, all routed through a local **Claude Code bridge** that runs the model as a full agent (web search, file/grep, multi-turn).
 
 ## Features
 
 - **Multi-provider model picker**: Switch between DeepSeek, OpenRouter (e.g. `tencent/hy3:free`), and Claude models per message — plus a think-effort setting (low/medium/high)
 - **Claude Code bridge**: Local Python (FastAPI) server runs Claude Code headless against cheap models (DeepSeek / OpenRouter) instead of official Anthropic models
 - **AI-Powered Q&A**: Ask questions about the current webpage, with multi-modal support
+- **Fact-checking with sources**: One click verifies the page's claims (or a claim you type) against the web via the agent, with cited, clickable sources (needs a bridge provider)
+- **Cross-page session memory**: Pages you ask about are saved as files the agent greps on demand, so you can compare and follow up across pages accurately without bloating each prompt; memory is scoped to the session and deleted when the session is deleted (bridge providers; direct providers get an inlined fallback)
 - **Per-message metadata**: Footer shows provider · model · effort · ~cost · duration
 - **Message actions**: Copy, thumbs up/down, regenerate; edit or restart the conversation from any of your messages
-- **File Attachments**: Drag & drop or paste images, PDFs, and text files
+- **File Attachments**: Drag & drop or paste PDFs and text/code files
 - **PDF Text Extraction**: Automatic text extraction via PDF.js
-- **Content Analysis**: Mozilla's Readability.js extracts clean page content
+- **Content Analysis**: Defuddle extracts clean page content as Markdown (cleaned raw-text fallback)
 - **Markdown Rendering**: Code blocks with copy buttons, tables, links
 - **Chat History**: Persistent conversation history stored locally
 - **Keyboard Shortcuts**: Ctrl/Cmd+Enter (send), Ctrl/Cmd+K (focus), Ctrl/Cmd+N (new chat), Ctrl/Cmd+H (history), Ctrl/Cmd+L (clear), Esc (close overlays)
@@ -39,7 +41,7 @@ uvicorn server:app --port 8765
 
 Health check: http://127.0.0.1:8765/health — you want `"claude_cli_found": true`.
 
-The bridge only needs to run when you use a bridge provider; direct OpenAI-compatible providers work without it.
+The bridge must be running to use the extension — all providers route through it.
 
 ## Configuration
 
@@ -47,10 +49,6 @@ Create `config.js` in the root directory (it's gitignored — your keys never ge
 
 ```javascript
 const CONFIG = {
-    // Optional leftover key field (not required for the bridge)
-    OPENAI_API_KEY: 'sk-REPLACE_ME_OR_IGNORE',
-    OPENAI_MODEL: 'gpt-4o-mini',
-
     // Python bridge server
     BRIDGE_URL: 'http://127.0.0.1:8765',
 
@@ -59,32 +57,44 @@ const CONFIG = {
     DEFAULT_MODEL: 'deepseek-v4-flash',
     DEFAULT_EFFORT: 'medium',
 
+    // All providers route through the local Claude Code bridge.
     PROVIDERS: {
-        // type 'bridge' -> local bridge -> Claude Code -> provider
         'deepseek':   { label: 'deepseek',   type: 'bridge', provider: 'deepseek',   models: ['deepseek-v4-flash', 'deepseek-v4-pro'] },
         'openrouter': { label: 'openrouter', type: 'bridge', provider: 'openrouter', models: ['tencent/hy3:free'] },
-        'claude':     { label: 'claude',     type: 'bridge', provider: 'claude',     models: ['default'] },
-
-        // type 'openai' -> direct OpenAI-compatible API (optional)
-        // 'my-provider': {
-        //     label: 'my provider',
-        //     type: 'openai',
-        //     baseUrl: 'https://api.example.com/v1',
-        //     apiKey: 'YOUR_KEY',
-        //     models: ['model-name']
-        // }
+        'claude':     { label: 'claude',     type: 'bridge', provider: 'claude',     models: ['default'] }
     }
 };
 ```
 
 Bridge provider keys (DeepSeek/OpenRouter) go in `bridge/.env`, not here.
 
+## Agent abilities & security
+
+By default the bridge runs Claude Code as a **full agent** — every tool (web search, file access, shell), permission prompts skipped, and a multi-turn loop. This is what lets a cheap model self-correct and look things up instead of answering in one shot.
+
+The tradeoff: because the bridge is an HTTP endpoint on `localhost:8765`, any request that reaches it can make Claude Code run shell commands and edit files (inside `CLAUDE_WORKDIR`, default `bridge/workspace/`). The server binds to localhost only — keep the port private and don't expose it.
+
+Tune it in `bridge/.env` (all optional; defaults are full mode):
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `CLAUDE_SKIP_PERMISSIONS` | `1` | `1` = autonomous tools; `0` = only auto-run `CLAUDE_ALLOWED_TOOLS` |
+| `CLAUDE_RESTRICT_TOOLS` | *(all)* | Limit which tools exist, e.g. `WebSearch,WebFetch` for web-only |
+| `CLAUDE_ALLOWED_TOOLS` | *(none)* | Auto-approve just these (when skip is off) |
+| `CLAUDE_MAX_TURNS` | `20` | Cap agent turns so nothing runs away |
+| `CLAUDE_TIMEOUT` | `600` | Wall-clock limit per run (seconds) |
+| `CLAUDE_WORKDIR` | `bridge/workspace/` | Where file/shell tools operate |
+| `CLAUDE_ADD_DIRS` | *(none)* | Extra dirs the agent may read/edit |
+| `CLAUDE_STRICT_MCP` | `1` | Ignore global MCP servers (avoids hangs) |
+
+To lock it down to a safe read-only-web assistant: `CLAUDE_RESTRICT_TOOLS=WebSearch,WebFetch`. Check the active mode any time at http://127.0.0.1:8765/health.
+
 ## How It Works
 
-1. **Content Extraction**: The extension injects Readability.js into the active tab and extracts clean page content (raw-text fallback)
-2. **Routing**: Your question + page content + history is sent to the background service worker, which routes by provider — either to the local bridge or a direct OpenAI-compatible API
-3. **Bridge**: runs `claude -p` with per-provider env (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`) so Claude Code uses DeepSeek, OpenRouter (Hy3), etc. for inference
-4. **Response**: Rendered as markdown, with a footer showing provider · model · effort · ~cost · duration
+1. **Content Extraction**: The extension injects Defuddle into the active tab, which removes boilerplate and returns clean Markdown directly (cleaned raw-text last resort if Defuddle can't parse the page)
+2. **Routing**: Your question + page content + history is sent to the background service worker, which forwards it to the local Claude Code bridge
+3. **Bridge**: runs `claude -p` with per-provider env (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`) so Claude Code uses DeepSeek, OpenRouter (Hy3), etc. for inference — as a **full agent** with tools (web search, file access, shell) and a multi-turn loop, so a cheap model can look things up and self-correct instead of one-shotting
+4. **Response**: Rendered as markdown, with a footer showing provider · model · effort · turns · ~cost · duration
 5. **History**: Conversations persist in localStorage
 
 ## Project Structure
@@ -92,8 +102,8 @@ Bridge provider keys (DeepSeek/OpenRouter) go in `bridge/.env`, not here.
 ```
 AI_sidebar/
 ├── manifest.json              # Extension manifest (MV3)
-├── background.js              # Service worker - provider router (bridge / direct APIs)
-├── content.js                 # Content script - Readability.js extraction
+├── background.js              # Service worker - routes requests to the Claude Code bridge
+├── defuddle.js                 # Vendored Defuddle bundle (extraction → Markdown)
 ├── sidebar.html               # UI structure
 ├── sidebar.css                # Styling (dark theme)
 ├── config.js                  # Providers & keys (gitignored - create this)
@@ -108,15 +118,13 @@ AI_sidebar/
 │   ├── app.js                 # Application entry point
 │   ├── components/
 │   │   ├── MessageComponent.js     # Message rendering + action rows
-│   │   ├── InputComponent.js       # Input, attach menu, drag-drop
+│   │   ├── InputComponent.js       # Input, file attach, drag-drop
 │   │   ├── ModelPickerComponent.js # Provider/model/effort popup
-│   │   ├── HistoryComponent.js     # Chat history drawer
-│   │   └── LightboxComponent.js    # Image preview modal
+│   │   └── HistoryComponent.js     # Chat history drawer
 │   ├── services/
 │   │   ├── PageService.js          # Active-tab content extraction
-│   │   ├── FileService.js          # File processing (images, PDFs, text)
-│   │   ├── StorageService.js       # localStorage wrapper
-│   │   └── TTSService.js           # Unused leftover (read-aloud removed)
+│   │   ├── FileService.js          # File processing (PDFs, text)
+│   │   └── StorageService.js       # localStorage wrapper
 │   ├── store/
 │   │   ├── ChatStore.js            # Chat state + events
 │   │   └── store.js                # Singleton export
@@ -125,7 +133,7 @@ AI_sidebar/
 │       ├── helpers.js              # Utilities
 │       ├── sanitizer.js            # HTML sanitization (XSS prevention)
 │       └── validators.js           # Input validation
-└── vendored: Readability.js, marked.min.js, pdf.min.js, pdf.worker.min.js
+└── vendored: defuddle.js (extractor → Markdown), marked.min.js, pdf.min.js, pdf.worker.min.js
 ```
 
 ## Development
@@ -156,7 +164,7 @@ After code changes: `chrome://extensions` → reload ⟳ the extension.
 
 **Content not extracted**:
 - Page may be restricted (chrome://, file://, web store)
-- Readability falls back to raw text automatically
+- Defuddle falls back to cleaned raw text automatically
 
 **Chat history lost**:
 - localStorage cleared or quota exceeded (~5MB limit)

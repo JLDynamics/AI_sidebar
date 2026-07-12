@@ -67,19 +67,6 @@ export function deepClone(obj) {
 }
 
 /**
- * Formats a file size for display
- * @param {number} bytes - The file size in bytes
- * @returns {string} - Formatted file size string
- */
-export function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-}
-
-/**
  * Truncates text to a specified length
  * @param {string} text - The text to truncate
  * @param {number} maxLength - The maximum length
@@ -88,50 +75,6 @@ export function formatFileSize(bytes) {
 export function truncateText(text, maxLength) {
     if (!text || text.length <= maxLength) return text || '';
     return text.substring(0, maxLength) + '...';
-}
-
-/**
- * Cleans text for TTS by removing URLs and citations
- * @param {string} text - The text to clean
- * @returns {string} - Cleaned text
- */
-export function cleanTextForTTS(text) {
-    if (!text) return '';
-
-    // Remove Markdown links [text](url) -> text
-    let cleanText = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-
-    // Remove http/https URLs
-    cleanText = cleanText.replace(/https?:\/\/[^\s)]+/g, '');
-
-    // Remove parenthesized domains often used as citations e.g. (example.com)
-    cleanText = cleanText.replace(/\([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\)/g, '');
-
-    return cleanText;
-}
-
-/**
- * Checks if a value is a promise
- * @param {*} value - The value to check
- * @returns {boolean} - True if the value is a promise
- */
-export function isPromise(value) {
-    return value && typeof value.then === 'function';
-}
-
-/**
- * Safe JSON parse with fallback
- * @param {string} json - The JSON string to parse
- * @param {*} fallback - The fallback value if parsing fails
- * @returns {*} - Parsed object or fallback
- */
-export function safeJSONParse(json, fallback = null) {
-    try {
-        return JSON.parse(json);
-    } catch (e) {
-        console.warn('Failed to parse JSON:', e);
-        return fallback;
-    }
 }
 
 /**

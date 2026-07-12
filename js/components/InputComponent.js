@@ -40,51 +40,15 @@ class InputComponent {
             }
         });
 
-        // "+" button toggles the attach menu (Add photo / Add file)
-        this.attachMenu = document.getElementById('attachMenu');
-        const attachPhotoBtn = document.getElementById('attachPhotoBtn');
-        const attachFileBtn = document.getElementById('attachFileBtn');
-
-        const FULL_ACCEPT = 'image/jpeg, image/png, image/webp, image/gif, .txt, .md, .js, .py, .html, .css, .json, .pdf';
-
+        // "+" opens the file picker directly (PDF / text / code files).
         this.uploadBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (this.attachMenu) {
-                this.attachMenu.classList.toggle('open');
-            } else {
-                this.fileInput.click();
-            }
+            this.fileInput.click();
         });
 
-        if (attachPhotoBtn) {
-            attachPhotoBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.attachMenu.classList.remove('open');
-                this.fileInput.accept = 'image/jpeg, image/png, image/webp, image/gif';
-                this.fileInput.click();
-            });
-        }
+        this.fileInput.addEventListener('change', (e) => this._handleFileSelection(e));
 
-        if (attachFileBtn) {
-            attachFileBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.attachMenu.classList.remove('open');
-                this.fileInput.accept = '.txt, .md, .js, .py, .html, .css, .json, .pdf';
-                this.fileInput.click();
-            });
-        }
-
-        // Close attach menu on outside click, restore full accept list after use
-        document.addEventListener('click', () => {
-            if (this.attachMenu) this.attachMenu.classList.remove('open');
-        });
-
-        this.fileInput.addEventListener('change', (e) => {
-            this._handleFileSelection(e);
-            this.fileInput.accept = FULL_ACCEPT;
-        });
-
-        // Paste support
+        // Paste support (files pasted into the input)
         this.chatInput.addEventListener('paste', (e) => this._handlePaste(e));
 
         // Drag and drop
@@ -288,17 +252,10 @@ class InputComponent {
         const item = document.createElement('div');
         item.className = 'preview-item';
 
-        if (attachment.type === 'image') {
-            const img = document.createElement('img');
-            img.src = attachment.content;
-            img.alt = attachment.name;
-            item.appendChild(img);
-        } else {
-            const icon = document.createElement('div');
-            icon.className = 'file-icon';
-            icon.textContent = getFileIcon(attachment.name);
-            item.appendChild(icon);
-        }
+        const icon = document.createElement('div');
+        icon.className = 'file-icon';
+        icon.textContent = getFileIcon(attachment.name);
+        item.appendChild(icon);
 
         const removeBtn = document.createElement('button');
         removeBtn.className = 'preview-remove-btn';

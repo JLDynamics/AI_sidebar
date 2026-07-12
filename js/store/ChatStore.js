@@ -6,6 +6,11 @@
 import { storageService } from '../services/StorageService.js';
 import { generateId, truncateText } from '../utils/helpers.js';
 
+// Session page memory: how many pages to remember per chat, and how much of
+// each page's content to keep (trimmed to bound localStorage usage).
+const MAX_MEMORY_PAGES = 12;
+const MAX_STORED_PAGE_CHARS = 8000;
+
 /**
  * Event types for store subscriptions
  */
@@ -14,7 +19,8 @@ export const StoreEvents = {
     CURRENT_CHAT_CHANGED: 'current_chat_changed',
     HISTORY_TOGGLED: 'history_toggled',
     ATTACHMENT_CHANGED: 'attachment_changed',
-    MESSAGE_ADDED: 'message_added'
+    MESSAGE_ADDED: 'message_added',
+    SESSION_DELETED: 'session_deleted'
 };
 
 /**
@@ -27,8 +33,7 @@ class ChatStore {
             chats: [],
             currentChatId: null,
             isHistoryOpen: false,
-            currentAttachment: null,
-            pendingAction: null
+            currentAttachment: null
         };
 
         // Subscribers
@@ -128,12 +133,13 @@ class ChatStore {
             id: generateId(),
             title: 'New Chat',
             messages: [],
+            pages: [],
             lastUpdated: Date.now()
         };
 
         this.state.chats.unshift(newChat);
         this.state.currentChatId = newChat.id;
-        this._persist();
+        this._persistFullChat(newChat);
 
         this._notify(StoreEvents.CHATS_CHANGED);
         this._notify(StoreEvents.CURRENT_CHAT_CHANGED);
@@ -154,7 +160,10 @@ class ChatStore {
             this.state.currentChatId = this.state.chats[0].id;
         }
 
-        this._persist();
+        storageService.removeChat(chatId);
+        this._persistIndex();
+        // Let listeners drop this session's server-side memory files.
+        this._notify(StoreEvents.SESSION_DELETED, chatId);
         this._notify(StoreEvents.CHATS_CHANGED);
         this._notify(StoreEvents.CURRENT_CHAT_CHANGED);
     }
@@ -190,12 +199,7 @@ class ChatStore {
 
         let storedContent = content;
         if (attachment) {
-            if (attachment.type === 'text') {
-                storedContent += `\n\n[File: ${attachment.name}]\n${attachment.content}`;
-            } else {
-                // Image: For now, we won't store large base64 in localStorage history
-                storedContent += `\n\n[Uploaded Image: ${attachment.name}]`;
-            }
+            storedContent += `\n\n[File: ${attachment.name}]\n${attachment.content}`;
         }
 
         const message = {
@@ -213,7 +217,7 @@ class ChatStore {
             currentChat.title = truncateText(content || "File Upload", 30);
         }
 
-        this._persist();
+        this._persistChat(currentChat);
         this._notify(StoreEvents.MESSAGE_ADDED, message);
         this._notify(StoreEvents.CHATS_CHANGED);
 
@@ -232,7 +236,8 @@ class ChatStore {
         const message = currentChat.messages[index];
         message.meta = message.meta || {};
         message.meta.rating = rating;
-        this._persist();
+        // Only this chat's messages changed (not its pages, title, or order).
+        storageService.saveChatMessages(currentChat);
     }
 
     /**
@@ -247,7 +252,7 @@ class ChatStore {
         currentChat.messages.splice(fromIndex);
         currentChat.lastUpdated = Date.now();
 
-        this._persist();
+        this._persistChat(currentChat);
         this._notify(StoreEvents.CURRENT_CHAT_CHANGED);
         this._notify(StoreEvents.CHATS_CHANGED);
     }
@@ -261,7 +266,8 @@ class ChatStore {
         const chat = this.state.chats.find(c => c.id === chatId);
         if (chat) {
             chat.title = title;
-            this._persist();
+            // Title lives in the index, so only the index needs rewriting.
+            this._persistIndex();
             this._notify(StoreEvents.CHATS_CHANGED);
         }
     }
@@ -303,19 +309,44 @@ class ChatStore {
     }
 
     /**
-     * Sets a pending action
-     * @param {Object|null} action - The pending action or null
+     * Records a visited page in the current session's memory. Deduped by URL
+     * (revisiting updates in place), capped, and trimmed. Pages live inside the
+     * chat object, so they persist with the session and are removed when it is
+     * deleted. Skips restricted/empty pages.
+     * @param {Object} page - {url, title, domain, mainContent}
      */
-    setPendingAction(action) {
-        this.state.pendingAction = action;
+    upsertPage(page) {
+        const chat = this.getCurrentChat();
+        if (!chat || !page || !page.url) return;
+
+        const content = (page.mainContent || '').trim();
+        if (!content || content === 'No readable content found.' || content.length < 40) return;
+
+        chat.pages = (chat.pages || []).filter(p => p.url !== page.url);
+        chat.pages.unshift({
+            url: page.url,
+            title: page.title || page.url,
+            domain: page.domain || '',
+            markdown: content.slice(0, MAX_STORED_PAGE_CHARS),
+            timestamp: Date.now()
+        });
+        if (chat.pages.length > MAX_MEMORY_PAGES) {
+            chat.pages = chat.pages.slice(0, MAX_MEMORY_PAGES);
+        }
+        // Only the heavy pages key for this chat changed.
+        this._persistPages(chat);
     }
 
     /**
-     * Gets the pending action
-     * @returns {Object|null} - The pending action or null
+     * Returns the current session's remembered pages, newest first, optionally
+     * excluding the given URL (the page being asked about right now).
+     * @param {string|null} excludeUrl - URL to exclude
+     * @returns {Array} - Remembered page objects
      */
-    getPendingAction() {
-        return this.state.pendingAction;
+    getSessionPages(excludeUrl = null) {
+        const chat = this.getCurrentChat();
+        if (!chat || !chat.pages) return [];
+        return chat.pages.filter(p => p.url !== excludeUrl);
     }
 
     /**
@@ -337,16 +368,52 @@ class ChatStore {
      * Clears all chats (with confirmation handled by caller)
      */
     clearAllChats() {
+        storageService.clearAllChats();
         this.state.chats = [];
         this.createChat();
     }
 
     /**
-     * Persists the current state to localStorage
+     * Saves one chat's messages plus the index (title/order/lastUpdated).
+     * Its heavy pages key is left untouched.
+     * @param {Object} chat
      * @private
      */
-    _persist() {
-        storageService.saveChats(this.state.chats);
+    _persistChat(chat) {
+        if (!chat) return;
+        storageService.saveChatMessages(chat);
+        this._persistIndex();
+    }
+
+    /**
+     * Saves one chat's messages AND pages plus the index. Used when a session
+     * is first created.
+     * @param {Object} chat
+     * @private
+     */
+    _persistFullChat(chat) {
+        if (!chat) return;
+        storageService.saveChatMessages(chat);
+        storageService.saveChatPages(chat);
+        this._persistIndex();
+    }
+
+    /**
+     * Saves one chat's pages only (the heavy key). Messages are left untouched.
+     * @param {Object} chat
+     * @private
+     */
+    _persistPages(chat) {
+        if (!chat) return;
+        storageService.saveChatPages(chat);
+    }
+
+    /**
+     * Saves the lightweight session index (ids, titles, order, lastUpdated).
+     * @private
+     */
+    _persistIndex() {
+        storageService.saveIndex(this.state.chats);
     }
 
     /**

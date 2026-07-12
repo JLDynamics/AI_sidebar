@@ -19,8 +19,10 @@ Run it:
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import time
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -102,6 +104,12 @@ class Attachment(BaseModel):
     content: str = ""
 
 
+class SessionPage(BaseModel):
+    url: str = ""
+    title: str = ""
+    markdown: str = ""
+
+
 class ChatRequest(BaseModel):
     question: str = ""
     metadata: PageMetadata = PageMetadata()
@@ -110,14 +118,101 @@ class ChatRequest(BaseModel):
     provider: str = "deepseek"
     model: str | None = None
     effort: str | None = None  # "low" | "medium" | "high"
+    mode: str | None = None  # None (normal chat) | "factcheck"
+    # Cross-page memory: other pages viewed this session. They're written to
+    # per-session files the agent greps on demand (not inlined into the prompt).
+    session_id: str = ""
+    session_pages: list[SessionPage] = []
 
 
 # ---------------------------------------------------------------------------
 # Prompt building
 # ---------------------------------------------------------------------------
 
-MAX_PAGE_CHARS = 15000
-MAX_HISTORY_MESSAGES = 10
+MAX_PAGE_CHARS = 20000
+MAX_HISTORY_MESSAGES = 25
+MEMORY_PRUNE_DAYS = 7  # delete session memory folders untouched for this long
+
+
+# ---------------------------------------------------------------------------
+# Session memory (files the agent greps, instead of inlining page text)
+# ---------------------------------------------------------------------------
+
+def _memory_root() -> str:
+    """Base folder for session memory, inside the agent's working directory."""
+    workdir = get_agent_config()["workdir"] or os.path.join(
+        os.path.dirname(__file__), "workspace"
+    )
+    return os.path.join(workdir, "memory")
+
+
+def _safe_session_id(session_id: str) -> str:
+    """Sanitize a session id into a safe folder name (no path traversal)."""
+    clean = re.sub(r"[^A-Za-z0-9_-]", "", session_id or "")[:64]
+    return clean or "default"
+
+
+def _prune_old_memory(root: str) -> None:
+    """Delete session folders whose newest file is older than the cutoff."""
+    cutoff = time.time() - MEMORY_PRUNE_DAYS * 86400
+    try:
+        for name in os.listdir(root):
+            path = os.path.join(root, name)
+            if not os.path.isdir(path):
+                continue
+            files = [os.path.join(path, f) for f in os.listdir(path)]
+            if not files:
+                continue  # freshly-created / in-progress folder; leave it alone
+            newest = max(os.path.getmtime(f) for f in files)
+            if newest < cutoff:
+                shutil.rmtree(path, ignore_errors=True)
+    except OSError:
+        pass
+
+
+def sync_session_memory(session_id: str, pages: list[SessionPage]) -> str | None:
+    """
+    Write the session's pages to Markdown files the agent can grep/read, and
+    remove files for pages no longer present. Returns the folder path, or None
+    when there's nothing to remember.
+    """
+    if not pages:
+        return None
+
+    root = _memory_root()
+    session_dir = os.path.join(root, _safe_session_id(session_id))
+    os.makedirs(session_dir, exist_ok=True)
+    _prune_old_memory(root)
+
+    wanted = {}
+    for page in pages:
+        content = (page.markdown or "").strip()
+        if not content:
+            continue
+        # Stable filename from the URL so revisits overwrite the same file.
+        fname = re.sub(r"[^A-Za-z0-9]", "_", page.url)[:80] or "page"
+        fname = f"{fname}.md"
+        wanted[fname] = (
+            f"# {page.title or page.url}\n"
+            f"URL: {page.url}\n\n"
+            f"{content}\n"
+        )
+
+    if not wanted:
+        return None
+
+    # Write wanted files; remove any stale .md files not in the current set.
+    for fname, body in wanted.items():
+        with open(os.path.join(session_dir, fname), "w", encoding="utf-8") as f:
+            f.write(body)
+    for existing in os.listdir(session_dir):
+        if existing.endswith(".md") and existing not in wanted:
+            try:
+                os.remove(os.path.join(session_dir, existing))
+            except OSError:
+                pass
+
+    return session_dir
 
 
 def history_to_text(history: list[HistoryMessage]) -> str:
@@ -134,12 +229,67 @@ def history_to_text(history: list[HistoryMessage]) -> str:
     return "\n".join(lines)
 
 
-def build_prompt(req: ChatRequest) -> str:
+def build_factcheck_prompt(req: ChatRequest) -> str:
+    """Prompt that turns the agent into a fact-checker with cited sources."""
+    page = req.metadata.mainContent[:MAX_PAGE_CHARS] or "[No page content extracted]"
+
+    if req.question.strip():
+        task = (
+            f'Fact-check this specific claim: "{req.question.strip()}"\n'
+            "Use the page below for context if relevant."
+        )
+    else:
+        task = (
+            "Identify the main factual claims on the page below and fact-check "
+            "the most important ones (aim for 3-6 claims)."
+        )
+
+    parts = [
+        "You are a rigorous fact-checking assistant with web search tools.",
+        "Verify claims against current, reputable, independent sources — do NOT "
+        "rely on the page itself or your own memory to confirm a claim.",
+        "",
+        "[TASK]",
+        task,
+        "",
+        "[METHOD]",
+        "For each claim:",
+        "1. State the claim in one short sentence.",
+        "2. Search the web and open sources to check it.",
+        "3. Give a verdict in bold: **Supported**, **Partly supported**, "
+        "**Unsupported**, or **Unclear**.",
+        "4. Explain briefly, citing sources inline with [1], [2], ... markers.",
+        "",
+        "End with a '## Sources' section listing each source as a numbered "
+        "Markdown link: `1. [Page title](https://url)`. Only list sources you "
+        "actually opened. If you cannot verify a claim, say so rather than guessing.",
+        "Be concise.",
+        "",
+        "[CURRENT PAGE]",
+        f"URL: {req.metadata.url}",
+        f"Title: {req.metadata.title}",
+        f"Content: {page}",
+    ]
+
+    if req.history:
+        parts += ["", "[CONVERSATION SO FAR]", history_to_text(req.history)]
+
+    return "\n".join(parts)
+
+
+def build_prompt(req: ChatRequest, memory_dir: str | None = None) -> str:
+    if req.mode == "factcheck":
+        return build_factcheck_prompt(req)
+
     page = req.metadata.mainContent[:MAX_PAGE_CHARS] or "[No page content extracted]"
 
     parts = [
         "You are a helpful assistant running inside a browser side panel.",
         "Answer the user's question about the web page below.",
+        "You have tools available (web search, file access, shell). Use them when "
+        "they would genuinely improve or verify the answer — for example, search "
+        "the web when the page doesn't contain the answer. Don't use tools when the "
+        "page already answers the question.",
         "Be concise and direct. Answer in plain text or simple markdown.",
         "",
         "[CURRENT PAGE]",
@@ -147,6 +297,18 @@ def build_prompt(req: ChatRequest) -> str:
         f"Title: {req.metadata.title}",
         f"Content: {page}",
     ]
+
+    if memory_dir:
+        parts += [
+            "",
+            "[SESSION MEMORY]",
+            "Other pages the user viewed earlier this session are saved as Markdown "
+            f"files in this folder:\n{memory_dir}",
+            "Each file starts with the page's title and URL. If the question refers "
+            "to another page, or asks you to compare across pages, use your file "
+            "tools (Glob/Grep/Read) on that folder to find and read the relevant "
+            "page(s). Skip this if the current page already answers the question.",
+        ]
 
     if req.history:
         parts += ["", "[CONVERSATION SO FAR]", history_to_text(req.history)]
@@ -215,6 +377,49 @@ def parse_claude_stream(stdout: str) -> dict:
     return final
 
 
+# ---------------------------------------------------------------------------
+# Agent configuration (env-driven, read fresh each request)
+# ---------------------------------------------------------------------------
+
+def _env_flag(name: str, default: bool) -> bool:
+    return os.getenv(name, "1" if default else "0").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def get_agent_config() -> dict:
+    """
+    Controls how much of Claude Code's agent the bridge unleashes.
+
+    Defaults = FULL abilities: every tool available, permission prompts skipped,
+    multi-turn agent loop on. That means any request that reaches this server
+    (it listens on localhost:8765) can make Claude Code run shell commands and
+    edit files. Keep the port private. To lock it down without code changes:
+
+        CLAUDE_SKIP_PERMISSIONS=0
+        CLAUDE_RESTRICT_TOOLS="WebSearch,WebFetch"   # web-only, read-nothing-else
+        CLAUDE_ALLOWED_TOOLS="WebSearch,WebFetch"    # auto-approve just these
+    """
+    return {
+        # Skip all permission prompts (needed for autonomous tool use headless).
+        "skip_permissions": _env_flag("CLAUDE_SKIP_PERMISSIONS", True),
+        # Auto-approve only these tools (used when skip_permissions is off).
+        "allowed_tools": os.getenv("CLAUDE_ALLOWED_TOOLS", "").strip(),
+        # Restrict which tools even exist. Empty => all tools available.
+        "restrict_tools": os.getenv("CLAUDE_RESTRICT_TOOLS", "").strip(),
+        # Cap agent turns so nothing runs away. Blank => Claude Code's default.
+        "max_turns": os.getenv("CLAUDE_MAX_TURNS", "20").strip(),
+        # Wall-clock limit for the whole agent run.
+        "timeout": int(os.getenv("CLAUDE_TIMEOUT", "600")),
+        # Where file/shell tools operate. Blank => bridge/workspace/.
+        "workdir": os.getenv("CLAUDE_WORKDIR", "").strip(),
+        # Comma-separated extra dirs the agent may read/edit.
+        "add_dirs": os.getenv("CLAUDE_ADD_DIRS", "").strip(),
+        # Ignore globally-configured MCP servers (avoids startup hangs).
+        "strict_mcp": _env_flag("CLAUDE_STRICT_MCP", True),
+    }
+
+
 def run_claude_code(
     prompt: str,
     env_overrides: dict,
@@ -229,11 +434,17 @@ def run_claude_code(
                    "'claude' is on your PATH.",
         )
 
-    # Claude Code runs headless; provider env + --model pick the cheap inference model
-    # (DeepSeek, OpenRouter Hy3, etc.) instead of official Claude.
-    # stream-json: needed to recover answers when result.result is empty (Hy3).
-    # --strict-mcp-config: ignore global MCP servers (chrome-devtools, etc.).
-    # --tools "": pure Q&A for the sidebar (page text is already in the prompt).
+    # Claude Code runs headless as a full agent: provider env + --model pick the
+    # cheap inference model (DeepSeek, OpenRouter Hy3, etc.), but Claude Code's
+    # harness, tools, and multi-turn agent loop stay ON. That harness is what
+    # lets a cheap model punch above its weight — it can web-search, read/edit
+    # files, run shell, and self-correct across turns instead of one-shotting.
+    #
+    # stream-json: recover answers when result.result is empty (some models).
+    # --strict-mcp-config: ignore global MCP servers unless CLAUDE_STRICT_MCP=0.
+    # Tool access + turn limits are controlled by env (see get_agent_config).
+    cfg = get_agent_config()
+
     cmd = [
         claude_bin,
         "-p",
@@ -241,14 +452,39 @@ def run_claude_code(
         "--output-format",
         "stream-json",
         "--verbose",
-        "--strict-mcp-config",
-        "--tools",
-        "",
     ]
+    if cfg["strict_mcp"]:
+        cmd += ["--strict-mcp-config"]
+
+    # Which tools EXIST for this run. Empty => every tool is available (full mode).
+    # Set CLAUDE_RESTRICT_TOOLS="WebSearch,WebFetch" to narrow the toolbox.
+    if cfg["restrict_tools"]:
+        cmd += ["--tools", cfg["restrict_tools"]]
+
+    # How tools get APPROVED. On a headless server there's no one to click "allow",
+    # so either skip prompts entirely (full mode) or pre-approve a safe allowlist.
+    if cfg["skip_permissions"]:
+        cmd += ["--dangerously-skip-permissions"]
+    elif cfg["allowed_tools"]:
+        cmd += ["--allowedTools", cfg["allowed_tools"]]
+
+    # Bound the agent loop so a runaway task can't burn time/tokens forever.
+    if cfg["max_turns"]:
+        cmd += ["--max-turns", cfg["max_turns"]]
+
+    # Extra folders the agent may read/edit.
+    for extra_dir in [p.strip() for p in cfg["add_dirs"].split(",") if p.strip()]:
+        cmd += ["--add-dir", extra_dir]
+
     if model:
         cmd += ["--model", model]
     if effort in ("low", "medium", "high", "xhigh", "max"):
         cmd += ["--effort", effort]
+
+    # Where Bash/Write/Edit operate. Defaults to a dedicated bridge/workspace/
+    # folder so the agent doesn't scribble over the extension source by accident.
+    workdir = cfg["workdir"] or os.path.join(os.path.dirname(__file__), "workspace")
+    os.makedirs(workdir, exist_ok=True)
 
     env = {**os.environ, **env_overrides}
     # Blank override values mean "unset" — a present-but-empty key can confuse auth.
@@ -265,11 +501,16 @@ def run_claude_code(
             text=True,
             encoding="utf-8",
             env=env,
+            cwd=workdir,
             stdin=subprocess.DEVNULL,
-            timeout=180,
+            timeout=cfg["timeout"],
         )
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Claude Code timed out (180s).")
+        raise HTTPException(
+            status_code=504,
+            detail=f"Claude Code timed out ({cfg['timeout']}s). Long agent runs can "
+                   f"exceed this — raise CLAUDE_TIMEOUT or lower CLAUDE_MAX_TURNS.",
+        )
 
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "unknown error").strip()[-2000:]
@@ -286,12 +527,24 @@ def run_claude_code(
 def health():
     claude_bin = shutil.which("claude")
     providers = get_providers()
+    cfg = get_agent_config()
     return {
         "status": "ok",
         "claude_cli_found": claude_bin is not None,
         "providers": {
             name: bool(p["key_name"] is None or os.getenv(p["key_name"]))
             for name, p in providers.items()
+        },
+        "agent": {
+            "mode": "full (all tools, permissions skipped)"
+            if cfg["skip_permissions"] and not cfg["restrict_tools"]
+            else "restricted",
+            "skip_permissions": cfg["skip_permissions"],
+            "tools": cfg["restrict_tools"] or cfg["allowed_tools"] or "all",
+            "max_turns": cfg["max_turns"] or "unlimited",
+            "timeout_s": cfg["timeout"],
+            "workdir": cfg["workdir"]
+            or os.path.join(os.path.dirname(__file__), "workspace"),
         },
     }
 
@@ -315,15 +568,10 @@ def chat(req: ChatRequest):
             detail=f"Missing {key_name} in bridge/.env — add your key and restart.",
         )
 
-    # v1 limitation: image attachments only work with direct API providers
-    if req.attachment and req.attachment.type == "image":
-        raise HTTPException(
-            status_code=400,
-            detail="Image attachments aren't supported through the bridge yet. "
-                   "Switch to a direct API provider for images.",
-        )
+    # Sync this session's other pages to files the agent can grep on demand.
+    memory_dir = sync_session_memory(req.session_id, req.session_pages)
 
-    prompt = build_prompt(req)
+    prompt = build_prompt(req, memory_dir=memory_dir)
     model = req.model or provider["default_model"]
     effort = req.effort if req.effort in ("low", "medium", "high") else None
 
@@ -353,4 +601,13 @@ def chat(req: ChatRequest):
         "effort": effort,
         "cost_usd": output.get("total_cost_usd"),
         "duration_ms": output.get("duration_ms"),
+        "num_turns": output.get("num_turns"),
     }
+
+
+@app.delete("/memory/{session_id}")
+def forget_session(session_id: str):
+    """Delete a session's remembered pages (called when a chat is deleted)."""
+    session_dir = os.path.join(_memory_root(), _safe_session_id(session_id))
+    shutil.rmtree(session_dir, ignore_errors=True)
+    return {"status": "ok", "forgotten": session_id}

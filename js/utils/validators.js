@@ -12,7 +12,6 @@ export const ErrorTypes = {
     AUTH: 'Authentication Error',
     CONTENT: 'Content Extraction Error',
     FILE: 'File Processing Error',
-    TTS: 'TTS Error',
     VALIDATION: 'Validation Error'
 };
 
@@ -32,11 +31,6 @@ export function validateConfig(config) {
 
     if (config.DEFAULT_PROVIDER && !config.PROVIDERS[config.DEFAULT_PROVIDER]) {
         throw new Error(`DEFAULT_PROVIDER "${config.DEFAULT_PROVIDER}" is not defined in PROVIDERS.`);
-    }
-
-    // OpenAI key is now only needed for TTS — warn instead of blocking startup
-    if (!config.OPENAI_API_KEY || !config.OPENAI_API_KEY.startsWith('sk-')) {
-        console.warn('No valid OPENAI_API_KEY in config.js — Text-to-Speech will be unavailable.');
     }
 }
 
@@ -58,10 +52,6 @@ export function validateFile(file) {
 
     // Check file type
     const allowedTypes = [
-        'image/jpeg',
-        'image/png',
-        'image/webp',
-        'image/gif',
         'application/pdf',
         'text/plain',
         'text/markdown',
@@ -113,49 +103,4 @@ export function validateMessage(message) {
     return { isValid: true };
 }
 
-/**
- * Validates a URL
- * @param {string} url - The URL to validate
- * @returns {boolean} - True if the URL is valid
- */
-export function isValidURL(url) {
-    if (!url || typeof url !== 'string') return false;
-
-    try {
-        const parsed = new URL(url);
-        return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-    } catch {
-        return false;
-    }
-}
-
-/**
- * Checks if text is an affirmative response
- * @param {string} text - The text to check
- * @returns {boolean} - True if the text is affirmative
- */
-export function isAffirmative(text) {
-    if (!text || typeof text !== 'string') return false;
-    return /^(yes|yeah|yep|sure|ok|okay|do it|go ahead|please do|yup|i would|yes please)$/i.test(text.trim());
-}
-
-/**
- * Checks if text is a negative response
- * @param {string} text - The text to check
- * @returns {boolean} - True if the text is negative
- */
-export function isNegative(text) {
-    if (!text || typeof text !== 'string') return false;
-    return /^(no|nah|nope|stop|cancel|don't|no thanks)$/i.test(text.trim());
-}
-
-/**
- * Sanitizes a chat title
- * @param {string} title - The title to sanitize
- * @param {number} maxLength - Maximum length for the title
- * @returns {string} - Sanitized title
- */
-export function sanitizeTitle(title, maxLength = 50) {
-    if (!title) return 'New Chat';
-    return title.trim().substring(0, maxLength) + (title.length > maxLength ? '...' : '');
-}
+/* affirmative/negative helpers removed with the search-confirmation flow */

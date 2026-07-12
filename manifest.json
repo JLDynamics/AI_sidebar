@@ -13,7 +13,6 @@
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*",
-    "https://api.openai.com/*",
     "http://*/*",
     "https://*/*"
   ],
@@ -23,17 +22,6 @@
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
-        "Readability.js",
-        "content.js"
-      ]
-    }
-  ],
   "side_panel": {
     "default_path": "sidebar.html"
   },
