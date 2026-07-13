@@ -78,6 +78,24 @@ export function truncateText(text, maxLength) {
 }
 
 /**
+ * Removes an embedded attachment body from a stored message, keeping a short
+ * marker in its place. Attachment content is saved on the bridge as a file the
+ * model reads on demand, so the full text must NOT ride along in the
+ * conversation history every turn (that would grow token cost without bound).
+ * @param {string} content - The stored message content
+ * @returns {string} - Content with the file body replaced by a marker
+ */
+export function stripAttachmentContent(content) {
+    if (!content) return content || '';
+    const marker = content.indexOf('\n\n[File: ');
+    if (marker === -1) return content;
+    const head = content.slice(0, marker);
+    const nameMatch = content.slice(marker).match(/\[File: ([^\]]+)\]/);
+    const name = nameMatch ? nameMatch[1] : 'file';
+    return `${head}\n\n[Shared file: ${name} — saved to this session's files]`;
+}
+
+/**
  * Retry wrapper for async operations
  * @param {Function} asyncFn - The async function to retry
  * @param {number} maxRetries - Maximum number of retries

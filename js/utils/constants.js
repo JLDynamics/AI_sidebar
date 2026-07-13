@@ -5,6 +5,3 @@
 
 // localStorage key for the model picker selection
 export const SELECTION_STORAGE_KEY = 'ai-sidebar-selection';
-
-// How many past messages are sent to the AI as conversation context
-export const HISTORY_CONTEXT_MESSAGES = 25;

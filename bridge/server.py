@@ -122,6 +122,8 @@ class ChatRequest(BaseModel):
     # Cross-page memory: other pages viewed this session. They're written to
     # per-session files the agent greps on demand (not inlined into the prompt).
     session_id: str = ""
+    # Legacy: older clients sent the session's other pages here. The bridge now
+    # accumulates pages from `metadata` itself, so this is optional/backward-compat.
     session_pages: list[SessionPage] = []
 
 
@@ -130,8 +132,16 @@ class ChatRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 MAX_PAGE_CHARS = 20000
-MAX_HISTORY_MESSAGES = 25
-MEMORY_PRUNE_DAYS = 7  # delete session memory folders untouched for this long
+# Pages are the source of truth here on disk (not in the browser). A session's
+# pages are deleted immediately when the chat is deleted (see /memory/{id}).
+# This prune is only a safety net for orphaned folders — e.g. a chat deleted
+# while the bridge was offline, so the delete signal never arrived.
+MEMORY_PRUNE_DAYS = 90
+# Per-page content cap for stored memory files (bounds what the agent reads).
+MEMORY_PAGE_CHARS = 8000
+# Only run the orphan prune this often, not on every request.
+PRUNE_INTERVAL_SECONDS = 3600
+_last_prune_at = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -170,55 +180,113 @@ def _prune_old_memory(root: str) -> None:
         pass
 
 
-def sync_session_memory(session_id: str, pages: list[SessionPage]) -> str | None:
-    """
-    Write the session's pages to Markdown files the agent can grep/read, and
-    remove files for pages no longer present. Returns the folder path, or None
-    when there's nothing to remember.
-    """
-    if not pages:
-        return None
+def _page_filename(url: str) -> str:
+    """Stable .md filename from a URL so revisits overwrite the same file."""
+    stem = re.sub(r"[^A-Za-z0-9]", "_", url)[:80] or "page"
+    return f"{stem}.md"
 
+
+def _write_doc(path: str, doc: str) -> bool:
+    """Write a Markdown doc, skipping the write if the file is already identical
+    (just refresh its mtime so the prune keeps treating it as active)."""
+    try:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                if f.read() == doc:
+                    os.utime(path, None)  # unchanged — keep fresh, skip rewrite
+                    return True
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doc)
+        return True
+    except OSError as e:
+        print(f"Failed to write memory file {path}: {e}")
+        return False
+
+
+def _write_page_file(session_dir: str, url: str, title: str, content: str) -> bool:
+    """Write one page's Markdown file. Returns True if written/kept."""
+    body = (content or "").strip()
+    if not body or url in ("", "unknown"):
+        return False
+    doc = f"# {title or url}\nURL: {url}\n\n{body[:MEMORY_PAGE_CHARS]}\n"
+    return _write_doc(os.path.join(session_dir, _page_filename(url)), doc)
+
+
+def _write_attachment_file(session_dir: str, name: str, content: str) -> bool:
+    """Write an attached file's content so the agent can read it on demand
+    across turns (instead of it being re-sent in the prompt every message)."""
+    body = (content or "").strip()
+    if not body:
+        return False
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", name or "file")[:80] or "file"
+    doc = f"# Attached file: {name or safe}\n\n{body}\n"
+    return _write_doc(os.path.join(session_dir, f"attachment__{safe}.md"), doc)
+
+
+def _session_has_files(session_dir: str) -> bool:
+    return os.path.isdir(session_dir) and any(
+        f.endswith(".md") for f in os.listdir(session_dir)
+    )
+
+
+def sync_session_memory(
+    session_id: str,
+    current_page: dict | None,
+    extra_pages: list[SessionPage] | None = None,
+    attachment=None,
+) -> str | None:
+    """
+    Accumulate this session's pages AND attached files as Markdown files the
+    agent can grep/read on demand.
+
+    Pages ACCUMULATE: the current page is upserted (added or refreshed) and
+    every previously stored page/file is KEPT. There is no count cap — disk,
+    not the 5MB browser quota, is the limit now. Files are removed only when the
+    chat is deleted (DELETE /memory/{id}); the age prune is a safety net for
+    orphaned folders and runs at most once per PRUNE_INTERVAL_SECONDS.
+
+    Returns the folder path if it holds any files, else None.
+    """
+    global _last_prune_at
     root = _memory_root()
     session_dir = os.path.join(root, _safe_session_id(session_id))
-    os.makedirs(session_dir, exist_ok=True)
-    _prune_old_memory(root)
 
-    wanted = {}
-    for page in pages:
-        content = (page.markdown or "").strip()
-        if not content:
-            continue
-        # Stable filename from the URL so revisits overwrite the same file.
-        fname = re.sub(r"[^A-Za-z0-9]", "_", page.url)[:80] or "page"
-        fname = f"{fname}.md"
-        wanted[fname] = (
-            f"# {page.title or page.url}\n"
-            f"URL: {page.url}\n\n"
-            f"{content}\n"
-        )
+    now = time.time()
+    if os.path.isdir(root) and now - _last_prune_at > PRUNE_INTERVAL_SECONDS:
+        _prune_old_memory(root)  # sweep orphaned folders (best-effort)
+        _last_prune_at = now
 
-    if not wanted:
-        return None
+    # Collect pages to upsert this turn: the current page, plus any legacy
+    # session_pages an older client might still send (backward compatible).
+    pages = []
+    if current_page and current_page.get("url"):
+        pages.append((current_page.get("url"), current_page.get("title", ""), current_page.get("content", "")))
+    for p in (extra_pages or []):
+        if p.url:
+            pages.append((p.url, p.title, p.markdown))
 
-    # Write wanted files; remove any stale .md files not in the current set.
-    for fname, body in wanted.items():
-        with open(os.path.join(session_dir, fname), "w", encoding="utf-8") as f:
-            f.write(body)
-    for existing in os.listdir(session_dir):
-        if existing.endswith(".md") and existing not in wanted:
-            try:
-                os.remove(os.path.join(session_dir, existing))
-            except OSError:
-                pass
+    has_attachment = (
+        attachment is not None
+        and getattr(attachment, "type", None) == "text"
+        and (attachment.content or "").strip()
+    )
 
-    return session_dir
+    if pages or has_attachment:
+        os.makedirs(session_dir, exist_ok=True)
+        for url, title, content in pages:
+            _write_page_file(session_dir, url, title, content)
+        if has_attachment:
+            _write_attachment_file(session_dir, attachment.name, attachment.content)
+
+    # Point the agent at the folder if it has anything worth grepping.
+    return session_dir if _session_has_files(session_dir) else None
 
 
 def history_to_text(history: list[HistoryMessage]) -> str:
-    """Flatten prior messages into a readable transcript."""
+    """Flatten prior messages into a readable transcript (no cap — the browser
+    sends the full conversation; these chats stay well within model limits)."""
     lines = []
-    for msg in history[-MAX_HISTORY_MESSAGES:]:
+    for msg in history:
         content = msg.content
         if isinstance(content, list):
             # Rich content: keep only the text parts
@@ -302,12 +370,14 @@ def build_prompt(req: ChatRequest, memory_dir: str | None = None) -> str:
         parts += [
             "",
             "[SESSION MEMORY]",
-            "Other pages the user viewed earlier this session are saved as Markdown "
-            f"files in this folder:\n{memory_dir}",
-            "Each file starts with the page's title and URL. If the question refers "
-            "to another page, or asks you to compare across pages, use your file "
-            "tools (Glob/Grep/Read) on that folder to find and read the relevant "
-            "page(s). Skip this if the current page already answers the question.",
+            "Earlier pages the user viewed and any files they shared this session "
+            f"are saved as Markdown files in this folder:\n{memory_dir}",
+            "Page files start with the page's title and URL; shared files are named "
+            "attachment__<name>.md. The CURRENT page above is already included, so "
+            "you don't need to read it from here. If the question refers to another "
+            "page or a previously shared file, use your file tools (Glob/Grep/Read) "
+            "on that folder to find and read the relevant one(s). Skip this if the "
+            "current page already answers the question.",
         ]
 
     if req.history:
@@ -568,8 +638,17 @@ def chat(req: ChatRequest):
             detail=f"Missing {key_name} in bridge/.env — add your key and restart.",
         )
 
-    # Sync this session's other pages to files the agent can grep on demand.
-    memory_dir = sync_session_memory(req.session_id, req.session_pages)
+    # Accumulate the current page into this session's on-disk memory (kept
+    # across turns, deleted when the chat is deleted). The agent greps these
+    # files on demand instead of us inlining every page into the prompt.
+    current_page = {
+        "url": req.metadata.url,
+        "title": req.metadata.title,
+        "content": req.metadata.mainContent,
+    }
+    memory_dir = sync_session_memory(
+        req.session_id, current_page, req.session_pages, attachment=req.attachment
+    )
 
     prompt = build_prompt(req, memory_dir=memory_dir)
     model = req.model or provider["default_model"]

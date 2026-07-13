@@ -8,14 +8,14 @@ A Chrome extension that puts an AI assistant in your browser's side panel for an
 - **Claude Code bridge**: Local Python (FastAPI) server runs Claude Code headless against cheap models (DeepSeek / OpenRouter) instead of official Anthropic models
 - **AI-Powered Q&A**: Ask questions about the current webpage, with multi-modal support
 - **Fact-checking with sources**: One click verifies the page's claims (or a claim you type) against the web via the agent, with cited, clickable sources (needs a bridge provider)
-- **Cross-page session memory**: Pages you ask about are saved as files the agent greps on demand, so you can compare and follow up across pages accurately without bloating each prompt; memory is scoped to the session and deleted when the session is deleted (bridge providers; direct providers get an inlined fallback)
+- **Cross-page session memory**: Pages you ask about — and any files you attach — are saved as files on the bridge that the agent greps/reads on demand, so you can compare and follow up across pages (and re-reference old attachments) accurately without re-sending them in every prompt. Memory is scoped to the session, has no page/file count cap, is deleted when the session is deleted, and a 90-day age prune sweeps orphaned folders
 - **Per-message metadata**: Footer shows provider · model · effort · ~cost · duration
 - **Message actions**: Copy, thumbs up/down, regenerate; edit or restart the conversation from any of your messages
 - **File Attachments**: Drag & drop or paste PDFs and text/code files
 - **PDF Text Extraction**: Automatic text extraction via PDF.js
 - **Content Analysis**: Defuddle extracts clean page content as Markdown (cleaned raw-text fallback)
 - **Markdown Rendering**: Code blocks with copy buttons, tables, links
-- **Chat History**: Persistent conversation history stored locally
+- **Chat History**: Full conversation persisted locally, one lightweight key per session; the whole conversation is sent as context (no fixed message cap)
 - **Keyboard Shortcuts**: Ctrl/Cmd+Enter (send), Ctrl/Cmd+K (focus), Ctrl/Cmd+N (new chat), Ctrl/Cmd+H (history), Ctrl/Cmd+L (clear), Esc (close overlays)
 
 ## Installation
@@ -92,10 +92,16 @@ To lock it down to a safe read-only-web assistant: `CLAUDE_RESTRICT_TOOLS=WebSea
 ## How It Works
 
 1. **Content Extraction**: The extension injects Defuddle into the active tab, which removes boilerplate and returns clean Markdown directly (cleaned raw-text last resort if Defuddle can't parse the page)
-2. **Routing**: Your question + page content + history is sent to the background service worker, which forwards it to the local Claude Code bridge
+2. **Routing**: Your question + current page + full conversation history is sent to the background service worker, which forwards it to the local Claude Code bridge (the current question is sent once, as `[USER QUESTION]`)
 3. **Bridge**: runs `claude -p` with per-provider env (`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`) so Claude Code uses DeepSeek, OpenRouter (Hy3), etc. for inference — as a **full agent** with tools (web search, file access, shell) and a multi-turn loop, so a cheap model can look things up and self-correct instead of one-shotting
-4. **Response**: Rendered as markdown, with a footer showing provider · model · effort · turns · ~cost · duration
-5. **History**: Conversations persist in localStorage
+4. **Session memory**: the bridge accumulates the pages you visit and the files you attach into a per-session folder on disk; older pages/attachments aren't re-sent every turn — the agent Greps/Reads them only when a question needs them
+5. **Response**: Rendered as markdown, with a footer showing provider · model · effort · turns · ~cost · duration
+
+### Where data lives
+
+- **Browser localStorage** holds only your **messages**, split into one small key per session (plus a lightweight index). Page/attachment content is *not* stored here, so the ~5MB quota is a non-issue.
+- **The bridge (your machine's disk)** holds **page and attachment memory** as Markdown files under `bridge/workspace/memory/<session>/`. Deleting a chat deletes its folder immediately; a 90-day prune cleans up any orphans.
+- The session ID links the two — delete a chat and both its messages and its on-disk memory go.
 
 ## Project Structure
 
@@ -124,7 +130,7 @@ AI_sidebar/
 │   ├── services/
 │   │   ├── PageService.js          # Active-tab content extraction
 │   │   ├── FileService.js          # File processing (PDFs, text)
-│   │   └── StorageService.js       # localStorage wrapper
+│   │   └── StorageService.js       # localStorage wrapper (messages only, per-session keys)
 │   ├── store/
 │   │   ├── ChatStore.js            # Chat state + events
 │   │   └── store.js                # Singleton export
@@ -167,7 +173,10 @@ After code changes: `chrome://extensions` → reload ⟳ the extension.
 - Defuddle falls back to cleaned raw text automatically
 
 **Chat history lost**:
-- localStorage cleared or quota exceeded (~5MB limit)
+- localStorage was cleared. Messages are tiny (pages/attachments live on the bridge, not in localStorage), so the ~5MB quota is effectively never the cause anymore
+
+**AI doesn't recall an earlier page or attachment**:
+- Session memory lives on the bridge under `bridge/workspace/memory/`. If the bridge wasn't running when you deleted a chat, its folder is swept by the 90-day prune. Deleting a chat while the bridge is up removes it immediately
 
 ## Security
 

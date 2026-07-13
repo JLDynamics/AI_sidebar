@@ -4,12 +4,11 @@
  */
 
 import { storageService } from '../services/StorageService.js';
-import { generateId, truncateText } from '../utils/helpers.js';
+import { generateId, truncateText, stripAttachmentContent } from '../utils/helpers.js';
 
-// Session page memory: how many pages to remember per chat, and how much of
-// each page's content to keep (trimmed to bound localStorage usage).
-const MAX_MEMORY_PAGES = 12;
-const MAX_STORED_PAGE_CHARS = 8000;
+// Note: session page memory now lives on the bridge (on-disk files it greps),
+// not in the browser. localStorage here holds only lightweight chat messages,
+// so the 5MB quota is no longer a concern. See StorageService for the layout.
 
 /**
  * Event types for store subscriptions
@@ -133,13 +132,12 @@ class ChatStore {
             id: generateId(),
             title: 'New Chat',
             messages: [],
-            pages: [],
             lastUpdated: Date.now()
         };
 
         this.state.chats.unshift(newChat);
         this.state.currentChatId = newChat.id;
-        this._persistFullChat(newChat);
+        this._persistChat(newChat);
 
         this._notify(StoreEvents.CHATS_CHANGED);
         this._notify(StoreEvents.CURRENT_CHAT_CHANGED);
@@ -309,58 +307,24 @@ class ChatStore {
     }
 
     /**
-     * Records a visited page in the current session's memory. Deduped by URL
-     * (revisiting updates in place), capped, and trimmed. Pages live inside the
-     * chat object, so they persist with the session and are removed when it is
-     * deleted. Skips restricted/empty pages.
-     * @param {Object} page - {url, title, domain, mainContent}
+     * Gets the conversation history to send as context: the FULL conversation
+     * (no cap — these chats stay well within model limits) EXCLUDING the current
+     * question. The current question is the last message (already added before
+     * this runs) and is sent separately as [USER QUESTION], so dropping it here
+     * avoids sending it twice.
+     * @returns {Array} - Array of message objects for the API
      */
-    upsertPage(page) {
-        const chat = this.getCurrentChat();
-        if (!chat || !page || !page.url) return;
-
-        const content = (page.mainContent || '').trim();
-        if (!content || content === 'No readable content found.' || content.length < 40) return;
-
-        chat.pages = (chat.pages || []).filter(p => p.url !== page.url);
-        chat.pages.unshift({
-            url: page.url,
-            title: page.title || page.url,
-            domain: page.domain || '',
-            markdown: content.slice(0, MAX_STORED_PAGE_CHARS),
-            timestamp: Date.now()
-        });
-        if (chat.pages.length > MAX_MEMORY_PAGES) {
-            chat.pages = chat.pages.slice(0, MAX_MEMORY_PAGES);
-        }
-        // Only the heavy pages key for this chat changed.
-        this._persistPages(chat);
-    }
-
-    /**
-     * Returns the current session's remembered pages, newest first, optionally
-     * excluding the given URL (the page being asked about right now).
-     * @param {string|null} excludeUrl - URL to exclude
-     * @returns {Array} - Remembered page objects
-     */
-    getSessionPages(excludeUrl = null) {
-        const chat = this.getCurrentChat();
-        if (!chat || !chat.pages) return [];
-        return chat.pages.filter(p => p.url !== excludeUrl);
-    }
-
-    /**
-     * Gets messages for API context (last N messages)
-     * @param {number} limit - Maximum number of messages to return
-     * @returns {Array} - Array of message objects for API
-     */
-    getMessagesForContext(limit = 10) {
+    getMessagesForContext() {
         const currentChat = this.getCurrentChat();
         if (!currentChat) return [];
 
-        return currentChat.messages.slice(-limit).map(m => ({
+        // slice(0, -1) drops the last message (the current question).
+        // stripAttachmentContent removes any embedded file body so a past
+        // attachment isn't re-sent in full on every turn (it lives on the
+        // bridge as a file the model reads on demand).
+        return currentChat.messages.slice(0, -1).map(m => ({
             role: m.role === 'User' ? 'user' : 'assistant',
-            content: m.content
+            content: stripAttachmentContent(m.content)
         }));
     }
 
@@ -368,8 +332,12 @@ class ChatStore {
      * Clears all chats (with confirmation handled by caller)
      */
     clearAllChats() {
+        const ids = this.state.chats.map(c => c.id);
         storageService.clearAllChats();
         this.state.chats = [];
+        // Tell listeners (and thus the bridge) to forget each session's files,
+        // so page/attachment folders aren't orphaned until the age prune.
+        ids.forEach(id => this._notify(StoreEvents.SESSION_DELETED, id));
         this.createChat();
     }
 
@@ -383,29 +351,6 @@ class ChatStore {
         if (!chat) return;
         storageService.saveChatMessages(chat);
         this._persistIndex();
-    }
-
-    /**
-     * Saves one chat's messages AND pages plus the index. Used when a session
-     * is first created.
-     * @param {Object} chat
-     * @private
-     */
-    _persistFullChat(chat) {
-        if (!chat) return;
-        storageService.saveChatMessages(chat);
-        storageService.saveChatPages(chat);
-        this._persistIndex();
-    }
-
-    /**
-     * Saves one chat's pages only (the heavy key). Messages are left untouched.
-     * @param {Object} chat
-     * @private
-     */
-    _persistPages(chat) {
-        if (!chat) return;
-        storageService.saveChatPages(chat);
     }
 
     /**

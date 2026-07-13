@@ -84,8 +84,7 @@ async function callBridge(provider, request, model) {
                 model: model || provider.model || null,
                 effort: request.effort || null,
                 mode: request.mode || null,
-                session_id: request.sessionId || '',
-                session_pages: request.sessionPages || []
+                session_id: request.sessionId || ''
             })
         });
     } catch (e) {

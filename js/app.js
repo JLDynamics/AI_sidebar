@@ -9,9 +9,8 @@ import InputComponent from './components/InputComponent.js';
 import ModelPickerComponent from './components/ModelPickerComponent.js';
 import { getStore, StoreEvents } from './store/store.js';
 import { validateConfig, ErrorTypes } from './utils/validators.js';
-import { withRetry } from './utils/helpers.js';
+import { withRetry, stripAttachmentContent } from './utils/helpers.js';
 import { getActivePageContent } from './services/PageService.js';
-import { HISTORY_CONTEXT_MESSAGES } from './utils/constants.js';
 
 // PDF.js Worker Configuration
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
@@ -326,18 +325,14 @@ class App {
             throw new Error('No active chat found');
         }
 
-        // Get page metadata + readable content from the active tab
+        // Get page metadata + readable content from the active tab. The bridge
+        // accumulates this page into the session's on-disk memory itself, so we
+        // no longer store or re-send the session's pages from the browser.
         const metadata = await getActivePageContent();
 
-        // Record this page in the session's memory, then gather the OTHER pages
-        // viewed this session. They're sent to the bridge, which writes them to
-        // files the agent greps on demand (accurate + token-efficient).
-        this.store.upsertPage(metadata);
-        const sessionPages = this.store.getSessionPages(metadata.url)
-            .map(p => ({ url: p.url, title: p.title, markdown: p.markdown }));
-
-        // Prepare history for context
-        const history = this.store.getMessagesForContext(HISTORY_CONTEXT_MESSAGES);
+        // Prepare history for context (full conversation, minus the current
+        // question — that's sent separately as [USER QUESTION] by the bridge).
+        const history = this.store.getMessagesForContext();
 
         // Send to background service worker
         const loadingId = 'loading-' + Date.now();
@@ -358,8 +353,7 @@ class App {
                 history: history,
                 attachment: attachment,
                 mode: mode,
-                sessionId: currentChat.id,
-                sessionPages: sessionPages
+                sessionId: currentChat.id
             });
 
             if (response.error) {
@@ -390,14 +384,17 @@ class App {
      * @private
      */
     async _handleUserAction(action, index, content) {
+        // Drop any embedded file body — the attachment lives on the bridge, so
+        // we don't put its full text back into the input or re-send it.
+        const cleanContent = stripAttachmentContent(content);
         if (action === 'edit') {
             // Remove this message and everything after, put text in the input
             this.store.truncateMessages(index);
-            this.components.input.setValue(content);
+            this.components.input.setValue(cleanContent);
         } else if (action === 'restart') {
             // Remove this message and everything after, then re-send it
             this.store.truncateMessages(index);
-            await this._handleSendMessage(content, null);
+            await this._handleSendMessage(cleanContent, null);
         }
     }
 
@@ -416,7 +413,7 @@ class App {
         // Find the user message that triggered this AI response
         for (let i = index - 1; i >= 0; i--) {
             if (chat.messages[i].role === 'User') {
-                const content = chat.messages[i].content;
+                const content = stripAttachmentContent(chat.messages[i].content);
                 this.store.truncateMessages(i);
                 await this._handleSendMessage(content, null);
                 return;

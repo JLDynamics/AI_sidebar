@@ -4,12 +4,14 @@
  *
  * Storage layout (per-session keys, NOT one big blob):
  *   ai_sidebar_chat_index         -> [{ id, title, lastUpdated }, ...]  (lightweight list, newest first)
- *   ai_sidebar_chat_<id>_msgs     -> [ ...messages ]   (small, changes on every message)
- *   ai_sidebar_chat_<id>_pages    -> [ ...pages ]       (heavy, changes only when a new page is visited)
+ *   ai_sidebar_chat_<id>_msgs     -> [ ...messages ]   (one small key per session)
  *
  * Why split? Saving one message only rewrites that one session's small
- * messages key instead of re-serializing every chat's messages AND pages.
- * The heavy page content is left untouched unless it actually changed.
+ * messages key instead of re-serializing every chat.
+ *
+ * Page memory is NOT stored here anymore — it lives on the bridge as on-disk
+ * files. localStorage holds only messages, so the 5MB quota is a non-issue.
+ * Any legacy "..._pages" keys from an older build are swept on load.
  */
 
 const STORAGE_KEYS = {
@@ -22,7 +24,6 @@ const STORAGE_KEYS = {
 
 const CHAT_PREFIX = 'ai_sidebar_chat_';
 const msgsKey = (id) => `${CHAT_PREFIX}${id}_msgs`;
-const pagesKey = (id) => `${CHAT_PREFIX}${id}_pages`;
 
 const MAX_STORAGE_SIZE = 5 * 1024 * 1024; // 5MB limit (browser cap is ~5-10MB)
 
@@ -169,7 +170,7 @@ class StorageService {
         }
 
         this._remove(msgsKey(oldest.id));
-        this._remove(pagesKey(oldest.id));
+        this._remove(`${CHAT_PREFIX}${oldest.id}_pages`); // legacy cleanup
 
         const trimmed = index.filter(e => e.id !== oldest.id);
         try {
@@ -214,15 +215,31 @@ class StorageService {
     getChats() {
         if (!this.available) return [];
         this._migrateLegacyChats();
+        this._sweepLegacyPageKeys();
 
         const index = this._read(STORAGE_KEYS.CHAT_INDEX) || [];
         return index.map(meta => ({
             id: meta.id,
             title: meta.title || 'New Chat',
             lastUpdated: meta.lastUpdated || 0,
-            messages: this._read(msgsKey(meta.id)) || [],
-            pages: this._read(pagesKey(meta.id)) || []
+            messages: this._read(msgsKey(meta.id)) || []
         }));
+    }
+
+    /**
+     * Removes any leftover "..._pages" keys from a previous build that stored
+     * page memory in the browser. Page memory now lives on the bridge, so these
+     * just waste space. Runs once (no-op after they're gone).
+     * @private
+     */
+    _sweepLegacyPageKeys() {
+        try {
+            Object.keys(localStorage)
+                .filter(k => k.startsWith(CHAT_PREFIX) && k.endsWith('_pages'))
+                .forEach(k => this._remove(k));
+        } catch (e) {
+            console.error('Failed to sweep legacy page keys:', e);
+        }
     }
 
     /**
@@ -250,17 +267,7 @@ class StorageService {
     }
 
     /**
-     * Saves ONE chat's pages (leaves its messages untouched).
-     * @param {Object} chat
-     * @returns {boolean}
-     */
-    saveChatPages(chat) {
-        if (!chat || !chat.id) return false;
-        return this._write(pagesKey(chat.id), JSON.stringify(chat.pages || []));
-    }
-
-    /**
-     * Saves every chat (index + each session's messages and pages).
+     * Saves every chat (index + each session's messages).
      * Used for migration and bulk saves; individual changes should use the
      * granular methods above so they don't rewrite everything.
      * @param {Array} chats
@@ -270,20 +277,19 @@ class StorageService {
         let ok = this.saveIndex(chats);
         (chats || []).forEach(c => {
             ok = this.saveChatMessages(c) && ok;
-            ok = this.saveChatPages(c) && ok;
         });
         return ok;
     }
 
     /**
-     * Removes one session's messages and pages keys. The caller is responsible
-     * for updating the index (e.g. via saveIndex).
+     * Removes one session's messages key (and any legacy pages key). The caller
+     * is responsible for updating the index (e.g. via saveIndex).
      * @param {string} chatId
      */
     removeChat(chatId) {
         if (!chatId) return;
         this._remove(msgsKey(chatId));
-        this._remove(pagesKey(chatId));
+        this._remove(`${CHAT_PREFIX}${chatId}_pages`); // legacy cleanup
     }
 
     /**

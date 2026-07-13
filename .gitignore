@@ -1,15 +1,28 @@
+# Secrets & config
 config.js
+.env
+
+# OS / editor
 .DS_Store
-node_modules/
-test_*.js
 *.log
+*.backup
+*.bak
+CLAUDE.md
+
+# Node
+node_modules/
+
+# Python
 .venv
 venv/
 __pycache__/
 *.pyc
-.env
+
+# Tests / scratch
+test_*.js
+
+# Bridge session memory — holds the user's browsed page content AND attached
+# files as on-disk Markdown the agent greps. Never commit this.
 bridge/workspace/
-.DS_Store
-CLAUDE.md
-*.backup
-*.bak
+bridge/memory/
+**/memory/
